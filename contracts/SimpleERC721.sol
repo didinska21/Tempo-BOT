@@ -6,10 +6,17 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract SimpleERC721 is ERC721, Ownable {
     uint256 public nextId;
-    constructor(string memory name_, string memory symbol_) ERC721(name_, symbol_) {
+
+    // pass initial owner to Ownable constructor
+    constructor(string memory name_, string memory symbol_) 
+        ERC721(name_, symbol_) 
+        Ownable(msg.sender) 
+    {
         nextId = 1;
     }
-    function mint(address to) external returns (uint256) {
+
+    // only owner can mint (deployer)
+    function mint(address to) external onlyOwner returns (uint256) {
         uint256 id = nextId++;
         _safeMint(to, id);
         return id;
