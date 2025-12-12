@@ -1,209 +1,113 @@
-// deploy.js (fixed for ethers v6)
-// Numeric menu deploy UI. Expects build artifacts in ./build/
-// Usage: node deploy.js  OR from main.js via runDeployMenu export.
-
+// deploy.js - deploy SimpleERC20 / SimpleERC721 (ethers v6) integrated with stats
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
 const ethers = require('ethers');
-
-const chalkReq = require('chalk');
-const chalk = chalkReq && chalkReq.default ? chalkReq.default : chalkReq;
-let ora;
-try { const o = require('ora'); ora = o && o.default ? o.default : o; } catch(e){ ora = null; }
+const readline = require('readline');
+const chalk = require('chalk');
 
 const BUILD_DIR = path.join(process.cwd(), 'build');
 const DEPLOYED_FILE = path.join(process.cwd(), 'deployed_contracts.json');
 
-function createRl() { return readline.createInterface({ input: process.stdin, output: process.stdout }); }
-function question(q) { const rl = createRl(); return new Promise(res => rl.question(q, a => { rl.close(); res(a); })); }
-async function askNumbered(items, promptText='Pilih (nomor):') {
-  for (let i=0;i<items.length;i++) console.log(`${String(i+1)}. ${items[i]}`);
-  while (true) {
-    const a = (await question(promptText+' ')).trim();
-    const n = Number(a);
-    if (!Number.isNaN(n) && n>=1 && n<=items.length) return n-1;
-    console.log('Masukkan angka yang valid');
-  }
-}
-async function askInput(msg, def='') {
-  const a = (await question(`${msg}${def? ' ('+def+')':''}: `)).trim();
-  return a === '' ? def : a;
-}
+function rlQuestion(q){ const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); return new Promise(res => rl.question(q, a => { rl.close(); res(a); })); }
+async function askNumbered(items, prompt='Pilih (nomor):'){ items.forEach((it,i)=>console.log(`${i+1}. ${it}`)); while(true){ const a = (await rlQuestion(prompt+' ')).trim(); const n=Number(a); if(!Number.isNaN(n) && n>=1 && n<=items.length) return n-1; console.log('Masukkan nomor valid.'); } }
+async function askInput(msg, def=''){ const a = (await rlQuestion(`${msg}${def? ' ('+def+')':''}: `)).trim(); return a === '' ? def : a; }
 
 function loadBuild(name) {
   const abiPath = path.join(BUILD_DIR, `${name}.abi.json`);
   const bytePath = path.join(BUILD_DIR, `${name}.bytecode.txt`);
   if (!fs.existsSync(abiPath) || !fs.existsSync(bytePath)) return null;
-  const abi = JSON.parse(fs.readFileSync(abiPath,'utf8'));
-  const bytecode = fs.readFileSync(bytePath,'utf8').trim();
-  return { abi, bytecode };
+  return { abi: JSON.parse(fs.readFileSync(abiPath,'utf8')), bytecode: fs.readFileSync(bytePath,'utf8').trim() };
 }
-
 function saveDeployed(obj) {
   let all = {};
   try { if (fs.existsSync(DEPLOYED_FILE)) all = JSON.parse(fs.readFileSync(DEPLOYED_FILE,'utf8')||'{}'); } catch(e){}
-  const key = `${new Date().toISOString()}`;
+  const key = new Date().toISOString();
   all[key] = obj;
   fs.writeFileSync(DEPLOYED_FILE, JSON.stringify(all, null, 2), 'utf8');
 }
 
-// DEPLOY helper compatible ethers v6
 async function deployContract(provider, wallet, abi, bytecode, constructorArgs = []) {
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
-  const spinner = ora ? ora('Deploying contract...').start() : null;
-
-  // deploy, returns a Contract instance (ethers v6)
-  let contract;
-  try {
-    contract = await factory.deploy(...constructorArgs);
-  } catch (e) {
-    if (spinner) spinner.fail('Deploy RPC error');
-    throw e;
-  }
-
-  if (spinner) spinner.text = 'Waiting for contract to be mined...';
-
-  // wait for deployment (ethers v6)
-  try {
-    // waitForDeployment waits until the contract has an address and tx mined
-    await contract.waitForDeployment();
-  } catch (e) {
-    if (spinner) spinner.fail('Waiting deployment failed');
-    throw e;
-  }
-
-  if (spinner) spinner.succeed('Contract deployed');
-
-  // Get address safely (support various ethers versions)
-  let address;
-  if (typeof contract.target !== 'undefined' && contract.target) address = contract.target;
-  else if (typeof contract.address !== 'undefined' && contract.address) address = contract.address;
-  else if (typeof contract.getAddress === 'function') address = await contract.getAddress();
-  else address = null;
-
-  // Get deploy tx (if available)
-  let deployTx = null;
-  try {
-    if (typeof contract.deploymentTransaction === 'function') {
-      deployTx = contract.deploymentTransaction();
-    } else if (contract.deployTransaction) {
-      deployTx = contract.deployTransaction;
-    }
-  } catch (e) {
-    // ignore
-  }
-
+  const contract = await factory.deploy(...constructorArgs);
+  await contract.waitForDeployment();
+  let address = contract.target || contract.address || (contract.getAddress ? await contract.getAddress() : null);
+  let deployTx = contract.deployTransaction || null;
   return { contract, address, deployTx };
 }
 
-async function runDeployMenu({ provider, wallet, ethers:ethersPassed, incStat } = {}) {
-  // provider & wallet optional if run standalone
-  let providerLocal = provider;
-  let walletLocal = wallet;
-  if (!providerLocal || !walletLocal) {
-    if (!process.env.RPC_URL || !process.env.PRIVATE_KEY) {
-      console.log(chalk.red('RPC_URL and PRIVATE_KEY must be set in .env to deploy.'));
-      return;
-    }
-    providerLocal = new ethers.JsonRpcProvider(process.env.RPC_URL);
-    walletLocal = new ethers.Wallet(process.env.PRIVATE_KEY, providerLocal);
-  }
+module.exports.runDeployMenu = async function({ provider, wallet, ethers:ethersPassed, stats } = {}) {
+  if (!process.env.RPC_URL) { console.log('RPC_URL missing in .env'); return; }
+  const providerLocal = provider || new ethers.JsonRpcProvider(process.env.RPC_URL);
+  const walletLocal = wallet || (process.env.PRIVATE_KEY ? new ethers.Wallet(process.env.PRIVATE_KEY, providerLocal) : null);
 
-  while (true) {
+  while(true) {
     console.log('\nDeploy Kontrak - pilih:');
-    const idx = await askNumbered(['Deploy Token (ERC20)','Deploy NFT (ERC721)','Back']);
+    const idx = await askNumbered(['Deploy Token (ERC20)', 'Deploy NFT (ERC721)', 'Back']);
     if (idx === 2) return;
 
     if (idx === 0) {
-      // ERC20
       const build = loadBuild('SimpleERC20');
-      if (!build) { console.log(chalk.yellow('Build artifact SimpleERC20 not found. Run scripts/compile_all.js first.')); continue; }
-      console.log(chalk.cyan('Deploy Token (ERC20)'));
-      const modeIdx = await askNumbered(['Deploy Manual (input name/symbol)','Deploy Auto (random name)','Back'],'Pilih mode:');
-      if (modeIdx === 2) continue;
-
-      let name, symbol, decimals;
-      if (modeIdx === 0) {
-        name = await askInput('Token name', 'MyToken');
-        symbol = await askInput('Token symbol', 'MTK');
+      if (!build) { console.log('Artifact SimpleERC20 not found in build/. Run compile_all.js'); continue; }
+      console.log('Deploy Token (ERC20)');
+      const mode = await askNumbered(['Deploy Manual (input name/symbol)','Deploy Auto (random name)', 'Back'],'Pilih mode:');
+      if (mode === 2) continue;
+      let name = 'MyToken', symbol = 'MTK';
+      if (mode === 0) {
+        name = await askInput('Token name', name);
+        symbol = await askInput('Token symbol', symbol);
       } else {
         const r = Math.random().toString(36).slice(2,8).toUpperCase();
         name = `Token${r}`; symbol = `T${r.slice(0,3)}`;
-        console.log('Auto name:', name, symbol);
       }
-      const decimalsStr = await askInput('Decimals (default 18)', '18');
-      decimals = Number(decimalsStr) || 18;
-      const defaultSupply = '1000000000'; // 1B
-      const supplyInput = await askInput('Total supply (human units)', defaultSupply);
-      const supplyHuman = BigInt(supplyInput || defaultSupply);
+      const decimals = Number(await askInput('Decimals (default 18)', '18')) || 18;
+      const supplyHuman = BigInt(await askInput('Total supply (human units)', '1000000000')) || 1000000000n;
       const supplyUnits = supplyHuman * (10n ** BigInt(decimals));
-
-      console.log(chalk.gray(`Deploying ${name} (${symbol}) supply ${supplyHuman} decimals ${decimals} -> units ${supplyUnits}`));
-
+      console.log('Deploying', name, symbol, 'supply', supplyHuman.toString());
       try {
         const { contract, address, deployTx } = await deployContract(providerLocal, walletLocal, build.abi, build.bytecode, [name, symbol, decimals, supplyUnits.toString()]);
-        console.log(chalk.green('Deployed at:'), address || contract.address || contract.target);
-        const txHash = deployTx && deployTx.hash ? deployTx.hash : (contract.deployTransaction && contract.deployTransaction.hash ? contract.deployTransaction.hash : null);
+        console.log(chalk.green('Deployed at:'), address);
+        const txHash = deployTx && deployTx.hash ? deployTx.hash : null;
         if (txHash) console.log('TX:', (process.env.EXPLORER_BASE||'') + '/tx/' + txHash);
-        saveDeployed({ type:'ERC20', name, symbol, address: address || contract.address || contract.target, tx: txHash, timestamp: new Date().toISOString() });
-      } catch (e) {
-        console.log(chalk.red('Deploy failed:'), e && e.message ? e.message : e);
+        saveDeployed({ type:'ERC20', name, symbol, address, tx: txHash, timestamp: new Date().toISOString() });
+        if (stats) stats.inc('deploys', 1);
+      } catch(e) {
+        console.log('Deploy failed:', e && e.message ? e.message : e);
       }
-
     } else if (idx === 1) {
-      // ERC721
       const build = loadBuild('SimpleERC721');
-      if (!build) { console.log(chalk.yellow('Build artifact SimpleERC721 not found. Run scripts/compile_all.js first.')); continue; }
-      console.log(chalk.cyan('Deploy NFT (ERC721)'));
-      const modeIdx = await askNumbered(['Deploy Manual (input name/symbol)','Deploy Auto (random name)','Back'],'Pilih mode:');
-      if (modeIdx === 2) continue;
-
-      let name, symbol;
-      if (modeIdx === 0) {
-        name = await askInput('NFT name', 'MyNFT');
-        symbol = await askInput('NFT symbol', 'MNFT');
-      } else {
-        const r = Math.random().toString(36).slice(2,8).toUpperCase();
-        name = `NFT${r}`; symbol = `N${r.slice(0,3)}`;
-        console.log('Auto name:', name, symbol);
-      }
-
-      const defaultMint = '10000';
-      const mintInput = await askInput('Initial mint count (will mint to deployer) (default 10000)', defaultMint);
-      const mintCount = Number(mintInput || defaultMint) || 10000;
-
+      if (!build) { console.log('Artifact SimpleERC721 not found in build/. Run compile_all.js'); continue; }
+      console.log('Deploy NFT (ERC721)');
+      const mode = await askNumbered(['Deploy Manual (input name/symbol)','Deploy Auto (random name)','Back'],'Pilih mode:');
+      if (mode === 2) continue;
+      let name='MyNFT', symbol='MNFT';
+      if (mode === 0) { name = await askInput('NFT name', name); symbol = await askInput('NFT symbol', symbol); }
+      else { const r = Math.random().toString(36).slice(2,8).toUpperCase(); name=`NFT${r}`; symbol=`N${r.slice(0,3)}`; }
+      const mintCount = Number(await askInput('Initial mint count (mint to deployer) (default 100)', '100')) || 100;
       try {
         const { contract, address, deployTx } = await deployContract(providerLocal, walletLocal, build.abi, build.bytecode, [name, symbol]);
-        console.log(chalk.green('Deployed at:'), address || contract.address || contract.target);
-        const txHash = deployTx && deployTx.hash ? deployTx.hash : (contract.deployTransaction && contract.deployTransaction.hash ? contract.deployTransaction.hash : null);
-        if (txHash) console.log('TX:', (process.env.EXPLORER_BASE||'') + '/tx/' + txHash);
-
-        // Attempt to mint if contract exposes mint and owner
+        console.log(chalk.green('Deployed at:'), address);
+        if (deployTx && deployTx.hash) console.log('TX:', (process.env.EXPLORER_BASE||'') + '/tx/' + deployTx.hash);
         try {
-          const c = new ethers.Contract(address || contract.address || contract.target, build.abi, walletLocal);
-          if (typeof c.mint === 'function') {
-            console.log(chalk.gray(`Minting ${mintCount} tokens to deployer... (this will create ${mintCount} txs)`));
+          const c = new ethers.Contract(address, build.abi, walletLocal);
+          if (c.mint) {
+            console.log('Minting', mintCount, 'to deployer...');
             for (let i=0;i<mintCount;i++) {
               const tx = await c.mint(await walletLocal.getAddress());
               await tx.wait(1);
             }
-            console.log(chalk.green('Minting done.'));
+            console.log('Minting done.');
           } else {
-            console.log(chalk.yellow('Contract has no mint method to auto-mint. You can mint later manually.'));
+            console.log('Contract has no mint method to auto-mint.');
           }
-        } catch (e) {
-          console.log(chalk.yellow('Auto-mint failed or not available:'), e && e.message ? e.message : e);
+        } catch(e) {
+          console.log('Auto-mint failed:', e && e.message ? e.message : e);
         }
-
-        saveDeployed({ type:'ERC721', name, symbol, address: address || contract.address || contract.target, tx: txHash, timestamp: new Date().toISOString(), minted: mintCount });
-      } catch (e) {
-        console.log(chalk.red('Deploy failed:'), e && e.message ? e.message : e);
+        saveDeployed({ type:'ERC721', name, symbol, address, tx: deployTx && deployTx.hash, minted: mintCount, timestamp: new Date().toISOString() });
+        if (stats) stats.inc('deploys', 1);
+      } catch(e) {
+        console.log('Deploy failed:', e && e.message ? e.message : e);
       }
     }
   }
-}
-
-// export for main.js use
-module.exports = { runDeployMenu };
+};
