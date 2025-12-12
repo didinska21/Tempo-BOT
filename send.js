@@ -1,6 +1,4 @@
-// send.js — FULL CLEAN & STABLE
-require('dotenv').config();
-
+// send.js — FINAL CLEAN
 const ethers = require('ethers');
 const readline = require('readline');
 const chalk = require('chalk').default;
@@ -11,7 +9,17 @@ const ERC20_ABI = [
   "function transfer(address to, uint amount) returns (bool)"
 ];
 
-// ---------- helpers ----------
+let logCounter = 0;
+const MAX_LOG = 5;
+
+function clearSmart() {
+  logCounter++;
+  if (logCounter >= MAX_LOG) {
+    console.clear();
+    logCounter = 0;
+  }
+}
+
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(res => rl.question(q, a => {
@@ -20,202 +28,97 @@ function rlQuestion(q) {
   }));
 }
 
-async function askNumbered(items, prompt = 'Pilih (nomor):') {
-  items.forEach((it, i) => console.log(`${i + 1}. ${it}`));
-  while (true) {
-    const n = Number(await rlQuestion(prompt + ' '));
-    if (!Number.isNaN(n) && n >= 1 && n <= items.length) return n - 1;
-    console.log(chalk.red('Nomor tidak valid.'));
-  }
-}
-
 async function askInput(msg, def = '') {
-  const a = await rlQuestion(`${msg}${def ? ` (${def})` : ''}: `);
+  const a = await rlQuestion(`${msg} (${def}): `);
   return a === '' ? def : a;
 }
 
-function now() {
-  return new Date().toISOString();
-}
-
-function shortHash(h) {
-  return h ? h.slice(0, 10) + '...' + h.slice(-6) : '';
-}
-
-// ---------- progress bar (manual & safe) ----------
-function renderProgress(current, total) {
-  const width = 30;
-  const filled = Math.round((current / total) * width);
-  const bar = '█'.repeat(filled) + '-'.repeat(width - filled);
-  process.stdout.write(`\rProgress |${bar}| ${current}/${total} TXs`);
-  if (current >= total) process.stdout.write('\n');
-}
-
-// ---------- balance ----------
-async function getTokenBalance(provider, token, address) {
-  try {
-    const c = new ethers.Contract(token.address, ERC20_ABI, provider);
-    const dec = await c.decimals();
-    const bal = await c.balanceOf(address);
-    return { bal, dec, human: ethers.formatUnits(bal, dec) };
-  } catch {
-    return { bal: null, dec: null, human: 'err' };
+async function askNumbered(items, prompt) {
+  items.forEach((it, i) => console.log(`${i + 1}. ${it}`));
+  while (true) {
+    const n = Number(await rlQuestion(prompt + ' '));
+    if (n >= 1 && n <= items.length) return n - 1;
+    console.log('Invalid');
   }
 }
 
-// ---------- send with retry ----------
-async function sendERC20WithRetry(wallet, token, to, amountHuman, waitConfirm, stats) {
-  const c = new ethers.Contract(token.address, ERC20_ABI, wallet);
-  const dec = await c.decimals();
-  const amountUnits = ethers.parseUnits(String(amountHuman), dec);
-
-  if (stats) stats.inc('attempts', 1);
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const tx = await c.transfer(to, amountUnits);
-      console.log(
-        chalk.yellow(`[${now()}] ➜ SENT ${shortHash(tx.hash)}  ${token.symbol} ${amountHuman} → ${to}`)
-      );
-
-      if (waitConfirm) {
-        const r = await tx.wait(1);
-        console.log(
-          chalk.green(`[${now()}] ✅ CONFIRMED block:${r.blockNumber}`)
-        );
-      }
-
-      if (process.env.EXPLORER_BASE) {
-        console.log(
-          chalk.cyan(`TX: ${process.env.EXPLORER_BASE}/tx/${tx.hash}`)
-        );
-      }
-
-      if (stats) stats.inc('success', 1);
-      return true;
-    } catch (e) {
-      console.log(
-        chalk.red(`[${now()}] ❌ Error attempt ${attempt}: ${e?.message || e}`)
-      );
-      if (attempt === 3) {
-        if (stats) stats.inc('failed', 1);
-        return false;
-      }
-      await new Promise(r => setTimeout(r, attempt * 1000));
-    }
-  }
-  return false;
+function progress(cur, total) {
+  const w = 30;
+  const f = Math.round((cur / total) * w);
+  process.stdout.write(`\rProgress |${'█'.repeat(f)}${'-'.repeat(w - f)}| ${cur}/${total}`);
+  if (cur === total) process.stdout.write('\n');
 }
 
-// ---------- MAIN SEND MENU ----------
 module.exports.runSendMenu = async function ({ provider, wallet, tokens, stats }) {
-  const walletAddr = await wallet.getAddress();
-
   while (true) {
     console.log('');
-    tokens.forEach((t, i) => {
-      console.log(`${i + 1}. Send Token: ${t.symbol} — balance: ${t.balanceHuman}`);
-    });
+    tokens.forEach((t, i) =>
+      console.log(`${i + 1}. Send ${t.symbol} (balance ${t.balanceHuman})`)
+    );
     console.log(`${tokens.length + 1}. Send Semua Token`);
     console.log(`${tokens.length + 2}. Back`);
 
-    const sel = Number(await askInput('Pilih menu', '')) - 1;
-    if (isNaN(sel) || sel < 0 || sel > tokens.length + 1) {
-      console.log(chalk.red('Pilihan tidak valid'));
-      continue;
-    }
+    const sel = Number(await rlQuestion('Pilih: ')) - 1;
     if (sel === tokens.length + 1) return;
 
-    const sendAll = sel === tokens.length;
+    const tokenList = sel === tokens.length ? tokens : [tokens[sel]];
 
-    const destTypeIdx = await askNumbered(
-      ['Send to Random Address', 'Send to Manual Address', 'Back'],
-      'Tujuan:'
+    const destMode = await askNumbered(
+      ['Send to Random Address', 'Send to Manual Address'],
+      'Tujuan'
     );
-    if (destTypeIdx === 2) continue;
 
-    let manualTo = null;
-    if (destTypeIdx === 1) {
-      manualTo = await askInput('Masukkan address tujuan');
-      if (!ethers.isAddress(manualTo)) {
-        console.log(chalk.red('Address tidak valid'));
-        continue;
-      }
+    let toAddr = null;
+    if (destMode === 1) {
+      toAddr = await askInput('Address tujuan');
+      if (!ethers.isAddress(toAddr)) return;
     }
 
-    const amount = await askInput('Jumlah yang akan dikirim per tx (per token)', '1');
-    const sendCount = Number(await askInput('Jumlah TX yang akan dikirim (0 = sampai balance habis)', '1'));
-    const waitConfirm =
-      (await askNumbered(['Yes', 'No'], 'Tunggu 1 konfirmasi tiap tx?')) === 0;
-
-    let totalPlanned = sendAll ? tokens.length * (sendCount || 1) : (sendCount || 1);
-    if (totalPlanned <= 0) totalPlanned = 1;
+    const amount = await askInput('Jumlah per tx', '1');
+    const count = Number(await askInput('Jumlah tx (0 = sampai habis)', '1'));
+    const wait = (await askNumbered(['Yes', 'No'], 'Tunggu konfirmasi?')) === 0;
 
     let done = 0;
-    let success = 0;
-    let failed = 0;
+    const total = count === 0 ? 9999 : count * tokenList.length;
 
-    if (sendAll) {
-      for (const token of tokens) {
-        let sent = 0;
-        while (sendCount === 0 || sent < sendCount) {
-          const balInfo = await getTokenBalance(provider, token, walletAddr);
-          if (!balInfo.bal) break;
+    for (const token of tokenList) {
+      const c = new ethers.Contract(token.address, ERC20_ABI, wallet);
+      const dec = await c.decimals();
 
-          const unit = ethers.parseUnits(String(amount), balInfo.dec);
-          if (balInfo.bal < unit) break;
+      while (count === 0 || done < total) {
+        const bal = await c.balanceOf(await wallet.getAddress());
+        const amt = ethers.parseUnits(amount, dec);
+        if (bal < amt) break;
 
-          const to =
-            destTypeIdx === 0 ? ethers.Wallet.createRandom().address : manualTo;
+        const to = destMode === 0 ? ethers.Wallet.createRandom().address : toAddr;
 
-          const ok = await sendERC20WithRetry(wallet, token, to, amount, waitConfirm, stats);
-          done++;
-          renderProgress(done, totalPlanned);
+        try {
+          stats.inc('attempts', 1);
+          const tx = await c.transfer(to, amt);
+          console.log(chalk.yellow(`➜ ${token.symbol} ${amount} → ${to}`));
+          clearSmart();
 
-          if (ok) {
-            success++;
-            sent++;
-          } else {
-            failed++;
-          }
+          if (wait) await tx.wait(1);
+          console.log(chalk.green(`✓ ${tx.hash}`));
+          clearSmart();
 
-          if (sendCount !== 0 && sent >= sendCount) break;
-          await new Promise(r => setTimeout(r, Number(process.env.INTERVAL_MS || 1500)));
+          if (process.env.EXPLORER_BASE)
+            console.log(`${process.env.EXPLORER_BASE}/tx/${tx.hash}`);
+
+          stats.inc('success', 1);
+        } catch {
+          stats.inc('failed', 1);
         }
-      }
-    } else {
-      const token = tokens[sel];
-      let sent = 0;
-      while (sendCount === 0 || sent < sendCount) {
-        const balInfo = await getTokenBalance(provider, token, walletAddr);
-        if (!balInfo.bal) break;
 
-        const unit = ethers.parseUnits(String(amount), balInfo.dec);
-        if (balInfo.bal < unit) break;
-
-        const to =
-          destTypeIdx === 0 ? ethers.Wallet.createRandom().address : manualTo;
-
-        const ok = await sendERC20WithRetry(wallet, token, to, amount, waitConfirm, stats);
         done++;
-        renderProgress(done, totalPlanned);
-
-        if (ok) {
-          success++;
-          sent++;
-        } else {
-          failed++;
-        }
-
-        if (sendCount !== 0 && sent >= sendCount) break;
-        await new Promise(r => setTimeout(r, Number(process.env.INTERVAL_MS || 1500)));
+        progress(done, total);
+        await new Promise(r => setTimeout(r, 1200));
+        if (count !== 0 && done >= total) break;
       }
     }
 
-    console.log('\n=== SESSION SUMMARY ===');
-    console.log(`Total TX attempted: ${done}`);
-    console.log(chalk.green(`Succeeded: ${success}`));
-    console.log(chalk.red(`Failed: ${failed}`));
-    console.log('========================\n');
+    console.log('\nSESSION DONE\n');
+    await rlQuestion('ENTER untuk kembali...');
+    console.clear();
   }
 };
