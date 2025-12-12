@@ -1,0 +1,15 @@
+{
+  "name": "auto-tx-didinska",
+  "version": "1.0.0",
+  "description": "auto.tx by didinska — token sender & contract deployer",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "ethers": "^6.12.1",
+    "inquirer": "^9.2.10"
+  }
+}
