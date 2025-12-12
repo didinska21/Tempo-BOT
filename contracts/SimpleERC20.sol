@@ -6,7 +6,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract SimpleERC20 is ERC20, Ownable {
     uint8 private _decimals;
-    constructor(string memory name_, string memory symbol_, uint8 decimals_, uint256 initialSupply) ERC20(name_, symbol_) {
+    // NOTE: pass initial owner to Ownable constructor
+    constructor(string memory name_, string memory symbol_, uint8 decimals_, uint256 initialSupply) 
+        ERC20(name_, symbol_) 
+        Ownable(msg.sender) 
+    {
         _decimals = decimals_;
         _mint(msg.sender, initialSupply);
     }
