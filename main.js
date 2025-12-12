@@ -44,7 +44,7 @@ function today() {
 function showBanner() {
   console.clear();
 
-  const banner = figlet.textSync('S E I S M I C', {
+  const banner = figlet.textSync('Auto TX', {
     font: 'ANSI Shadow',
     horizontalLayout: 'default',
     verticalLayout: 'default'
