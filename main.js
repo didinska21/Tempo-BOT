@@ -1,38 +1,75 @@
-// main.js — numeric menu, no gas prompts, UI premium safe imports
+// main.js - full updated file (readline numeric menu, ESM-safe imports, no gas prompts)
+// Replace your existing main.js with this file.
+
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const inquirer = require('inquirer');
+const inquirer = require('inquirer'); // still used by send.js for some prompts
 const ethers = require('ethers');
+const readline = require('readline');
 
-// ESM-safe imports for CommonJS
+// ESM-safe requires for CommonJS
 const chalkReq = require('chalk');
 const chalk = chalkReq && chalkReq.default ? chalkReq.default : chalkReq;
-const oraReq = require('ora');
-const ora = oraReq && oraReq.default ? oraReq.default : oraReq;
-const gradReq = (() => {
-  try { return require('gradient-string'); } catch(e){ return null; }
-})();
-const gradient = gradReq && gradReq.default ? gradReq.default : gradReq;
+
+let ora;
+try {
+  const oraReq = require('ora');
+  ora = oraReq && oraReq.default ? oraReq.default : oraReq;
+} catch (e) {
+  ora = null;
+}
+
+let gradient;
+try {
+  const g = require('gradient-string');
+  gradient = g && g.default ? g.default : g;
+} catch (e) {
+  gradient = null;
+}
 
 const sendModule = require('./send');
 const deployModule = require('./deploy');
 
+// Data / stats
 const DATA_DIR = path.join(process.cwd(), 'data');
 const STATS_FILE = path.join(DATA_DIR, 'stats.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function loadStats() {
-  try { if (!fs.existsSync(STATS_FILE)) return {}; return JSON.parse(fs.readFileSync(STATS_FILE,'utf8')||'{}'); }
-  catch(e){ return {}; }
+  try {
+    if (!fs.existsSync(STATS_FILE)) return {};
+    const raw = fs.readFileSync(STATS_FILE, 'utf8') || '{}';
+    return JSON.parse(raw);
+  } catch (e) {
+    return {};
+  }
 }
-function saveStats(obj) { try { fs.writeFileSync(STATS_FILE, JSON.stringify(obj, null, 2), 'utf8'); } catch(e){} }
+function saveStats(obj) {
+  try { fs.writeFileSync(STATS_FILE, JSON.stringify(obj, null, 2), 'utf8'); } catch (e) {}
+}
 function todayKey() {
-  const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-function ensureTodayStats() { const s = loadStats(); const k = todayKey(); if (!s[k]) s[k] = { attempts:0, success:0, failed:0 }; saveStats(s); return s; }
-function incStat(type) { const s = loadStats(); const k = todayKey(); if (!s[k]) s[k] = { attempts:0, success:0, failed:0 }; if (type==='attempt') s[k].attempts++; if (type==='success') s[k].success++; if (type==='failed') s[k].failed++; saveStats(s); }
+function ensureTodayStats() {
+  const s = loadStats();
+  const k = todayKey();
+  if (!s[k]) s[k] = { attempts:0, success:0, failed:0 };
+  saveStats(s);
+  return s;
+}
+function incStat(type) {
+  const s = loadStats();
+  const k = todayKey();
+  if (!s[k]) s[k] = { attempts:0, success:0, failed:0 };
+  if (type === 'attempt') s[k].attempts++;
+  if (type === 'success') s[k].success++;
+  if (type === 'failed') s[k].failed++;
+  saveStats(s);
+}
 
+// parse tokens from .env TOKENS env var (format: SYMBOL:0x... , SYMBOL2:0x..., ...)
 function parseTokensFromEnv() {
   const raw = (process.env.TOKENS || '').trim();
   if (!raw) {
@@ -49,8 +86,9 @@ function parseTokensFromEnv() {
   }).filter(t => t.address);
 }
 
+// load token balances (safe)
 async function loadTokenBalances(provider, wallet, tokens) {
-  const spinner = ora({ text: 'Loading token balances...', spinner: 'dots' }).start();
+  const spinner = ora ? ora({ text: 'Loading token balances...', spinner: 'dots' }).start() : null;
   const ABI = ['function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)'];
   try {
     const addr = await wallet.getAddress();
@@ -66,12 +104,13 @@ async function loadTokenBalances(provider, wallet, tokens) {
         t.decimals = null; t.balanceRaw = null; t.balanceHuman = 'err';
       }
     }
-    spinner.succeed('Balances loaded');
-  } catch(e) {
-    spinner.fail('Failed loading balances');
+    if (spinner) spinner.succeed('Balances loaded');
+  } catch (e) {
+    if (spinner) spinner.fail('Failed loading balances');
   }
 }
 
+// header printing
 function printHeader(walletAddr, tokens) {
   console.clear();
   try {
@@ -84,7 +123,7 @@ function printHeader(walletAddr, tokens) {
       console.log(chalk.cyan('  auto.tx by didinska'));
       console.log(chalk.cyan('==========================================='));
     }
-  } catch(e){
+  } catch (e) {
     console.log('===========================================');
     console.log('  auto.tx by didinska');
     console.log('===========================================');
@@ -96,22 +135,32 @@ function printHeader(walletAddr, tokens) {
   console.log('');
   console.log(chalk.bold('Loaded tokens:'));
   tokens.forEach((t,i) => {
-    const bal = t.balanceHuman && t.balanceHuman !== 'err' ? Number(t.balanceHuman).toLocaleString('en-US') : t.balanceHuman || 'n/a';
+    const bal = (t.balanceHuman && t.balanceHuman !== 'err') ? Number(t.balanceHuman).toLocaleString('en-US') : t.balanceHuman || 'n/a';
     console.log(`  ${chalk.dim(i+1 + '.')} ${chalk.yellow(t.symbol)}  ${chalk.dim('balance:')} ${bal}`);
   });
   console.log(chalk.gray('-------------------------------------------'));
 }
 
+// readline numeric menu helper (reliable across envs)
 async function askMenuNumber(choices, promptText = 'Pilih menu (masukkan nomor):') {
-  // prints numbered choices then ask numeric input
-  for (let i=0;i<choices.length;i++){
-    const c = choices[i];
-    console.log(`${chalk.dim(String(i+1)+'.')} ${c}`);
+  for (let i=0;i<choices.length;i++) {
+    console.log(`${chalk.dim(String(i+1)+'.')} ${choices[i]}`);
   }
-  const ans = await inquirer.prompt([{ name:'num', message: promptText, validate: v => { const n = Number(v); return (!isNaN(n) && n>=1 && n<=choices.length) ? true : `Masukkan angka 1..${choices.length}` } }]);
-  return Number(ans.num)-1;
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const question = q => new Promise(res => rl.question(q, ans => res(ans)));
+
+  let idx = -1;
+  while (true) {
+    const answer = await question(promptText + ' ');
+    const n = Number(answer);
+    if (!Number.isNaN(n) && n >= 1 && n <= choices.length) { idx = n - 1; break; }
+    console.log(chalk.yellow(`Masukkan angka antara 1 dan ${choices.length}`));
+  }
+  rl.close();
+  return idx;
 }
 
+// main loop
 async function main() {
   if (!process.env.RPC_URL || !process.env.PRIVATE_KEY) {
     console.error(chalk.red('Please set RPC_URL and PRIVATE_KEY in .env'));
@@ -137,19 +186,24 @@ async function main() {
 
     const mainChoices = ['Send Address (per token / send all)', 'Deploy Kontrak (Token / NFT)', 'Exit'];
     const idx = await askMenuNumber(mainChoices, 'Pilih menu (masukkan nomor):');
+    const sel = mainChoices[idx];
 
-    const selected = mainChoices[idx];
-    if (selected.startsWith('Exit')) {
-      console.log(chalk.dim('Bye 👋')); process.exit(0);
-    } else if (selected.startsWith('Send Address')) {
-      // pass incStat callback to send module
+    if (sel === 'Exit') {
+      console.log(chalk.dim('Bye 👋'));
+      process.exit(0);
+    } else if (sel === 'Send Address (per token / send all)') {
       await sendModule.runSendMenu({ provider, wallet, tokens, ethers, incStat });
-      const spinner = ora('Refreshing balances...').start();
-      try { await loadTokenBalances(provider, wallet, tokens); spinner.succeed('Balances refreshed'); } catch(e){ spinner.fail('Refresh failed'); }
-    } else if (selected.startsWith('Deploy Kontrak')) {
-      await deployModule.runDeployMenu({ provider, wallet, ethers, incStat });
-      const spinner = ora('Refreshing balances...').start();
-      try { await loadTokenBalances(provider, wallet, tokens); spinner.succeed('Balances refreshed'); } catch(e){ spinner.fail('Refresh failed'); }
+      const spin = ora ? ora('Refreshing balances...').start() : null;
+      try { await loadTokenBalances(provider, wallet, tokens); if (spin) spin.succeed('Balances refreshed'); } catch (e) { if (spin) spin.fail('Refresh failed'); }
+    } else if (sel === 'Deploy Kontrak (Token / NFT)') {
+      // call deploy menu (deploy.js expected to export runDeployMenu)
+      if (typeof deployModule.runDeployMenu === 'function') {
+        await deployModule.runDeployMenu({ provider, wallet, ethers, incStat });
+        const spin = ora ? ora('Refreshing balances...').start() : null;
+        try { await loadTokenBalances(provider, wallet, tokens); if (spin) spin.succeed('Balances refreshed'); } catch (e) { if (spin) spin.fail('Refresh failed'); }
+      } else {
+        console.log(chalk.yellow('Deploy module not implemented.'));
+      }
     }
 
     await new Promise(r => setTimeout(r, 200));
@@ -157,6 +211,8 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err && err.stack ? err.stack : err);
+  // final fallback error printing (avoid chalk/oracle crashes)
+  try { console.error(chalk.red('Fatal error:'), err && err.stack ? err.stack : err); }
+  catch (e) { console.error('Fatal error:', err && err.stack ? err.stack : err); }
   process.exit(1);
 });
