@@ -8,6 +8,7 @@
 const inquirer = require('inquirer');
 const fs = require('fs');
 const path = require('path');
+const EXPLORER_BASE = "https://explore.tempo.xyz";
 
 const prompt = (inquirer.createPromptModule && inquirer.createPromptModule()) || inquirer.prompt;
 
