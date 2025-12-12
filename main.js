@@ -1,131 +1,184 @@
-// main.js - unified CLI with premium ASCII pastel banner + daily stats
+// main.js — auto.tx by didinska (FINAL STABLE)
+// Premium UI (ASCII banner + pastel color) + Daily Stats
 require('dotenv').config();
+
 const fs = require('fs');
 const path = require('path');
-const ethers = require('ethers');
 const readline = require('readline');
-const chalk = require('chalk');
+const ethers = require('ethers');
 
+// IMPORTANT: chalk v5 CommonJS
+const chalk = require('chalk').default;
+
+// modules
 const sendModule = require('./send');
 const deployModule = require('./deploy');
-const faucetRpc = require('./faucet_rpc');
+const faucetModule = require('./faucet_rpc');
 const stats = require('./data/stats');
 
-const BUILD_DIR = path.join(process.cwd(), 'build');
-const TOKENS_ENV = process.env.TOKENS || '';
-
-function rlQuestion(q){ const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); return new Promise(res => rl.question(q, a => { rl.close(); res(a); })); }
-async function askNumbered(items, prompt='Pilih (masukkan nomor):'){ items.forEach((it,i)=>console.log(`${i+1}. ${it}`)); while(true){ const a = (await rlQuestion(prompt+' ')).trim(); const n=Number(a); if(!Number.isNaN(n) && n>=1 && n<=items.length) return n-1; console.log('Masukkan nomor valid.'); } }
-
-function parseTokensEnv() {
-  return TOKENS_ENV.split(',').map(s => s.trim()).filter(Boolean).map(s => {
-    const [sym, addr] = s.split(':').map(x=>x && x.trim());
-    return { symbol: sym, address: addr };
-  });
+// ---------- helpers ----------
+function rlQuestion(q) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
 }
 
-async function loadTokenBalances(provider, walletAddress, tokens) {
-  const abiPath = path.join(BUILD_DIR, 'SimpleERC20.abi.json');
-  let abi = null;
-  if (fs.existsSync(abiPath)) abi = JSON.parse(fs.readFileSync(abiPath,'utf8'));
+async function askNumbered(items, prompt = 'Pilih (nomor):') {
+  items.forEach((it, i) => console.log(`${i + 1}. ${it}`));
+  while (true) {
+    const n = Number(await rlQuestion(prompt + ' '));
+    if (!Number.isNaN(n) && n >= 1 && n <= items.length) return n - 1;
+    console.log(chalk.red('Nomor tidak valid.'));
+  }
+}
+
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+// ---------- pastel banner ----------
+function pastel(line, idx) {
+  const fns = [
+    chalk.cyan,
+    chalk.magenta,
+    chalk.blue,
+    chalk.green,
+    chalk.yellow,
+    chalk.white
+  ];
+  return fns[idx % fns.length](line);
+}
+
+function showBanner() {
+  const banner = [
+    '    _            _        _   _____    __',
+    '   / \\   _ __ __| | ___  / | |_   _|__|  \\',
+    '  / _ \\ | \'__/ _` |/ _ \\ | |   | |/ _ \\ |)',
+    ' / ___ \\| | | (_| |  __/ | |   | |  __/  /',
+    '/_/   \\_\\_|  \\__,_|\\___| |_|   |_|\\___|_/',
+    '',
+    '            auto.tx by didinska',
+    '     Send / Deploy / Faucet (RPC)'
+  ];
+
+  console.clear();
+  banner.forEach((l, i) => console.log(pastel(l, i)));
+  console.log('');
+}
+
+// ---------- token loader ----------
+function parseTokens() {
+  const raw = process.env.TOKENS || '';
+  return raw.split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(s => {
+      const [symbol, address] = s.split(':');
+      return { symbol, address };
+    });
+}
+
+async function loadBalances(provider, walletAddr, tokens) {
+  const abiPath = path.join(process.cwd(), 'build', 'SimpleERC20.abi.json');
+  if (!fs.existsSync(abiPath)) return;
+  const abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
+
   for (const t of tokens) {
     t.balanceHuman = 'n/a';
-    if (!t.address || !abi) continue;
+    if (!t.address) continue;
     try {
       const c = new ethers.Contract(t.address, abi, provider);
       const dec = await c.decimals();
-      const bal = await c.balanceOf(walletAddress);
+      const bal = await c.balanceOf(walletAddr);
       t.balanceHuman = ethers.formatUnits(bal, dec);
-    } catch (e) {
+    } catch {
       t.balanceHuman = 'err';
     }
   }
 }
 
-function pastelGradientAscii(textLines) {
-  // pastel color cycle (soft)
-  const colors = ['#ffd7da','#ffe8b3','#d7f7d2','#d7f0ff','#ecd7ff','#ffd6ea'];
-  // map hex -> chalk hex
-  return textLines.map((line, idx) => {
-    // color by line index
-    const color = colors[idx % colors.length];
-    return chalk.hex(color)(line);
-  }).join('\n');
-}
-
-function bannerLines() {
-  // simple ASCII art, no box style
-  return [
-    "    _            _        _   _____    __  ",
-    "   / \\   _ __ __| | ___  / | |_   _|__|  \\ ",
-    "  / _ \\ | '__/ _` |/ _ \\ | |   | |/ _ \\ |)",
-    " / ___ \\| | | (_| |  __/ | |   | |  __/  / ",
-    "/_/   \\_\\_|  \\__,_|\\___| |_|   |_|\\___|_/  ",
-    "",
-    "            auto.tx by didinska",
-    "     Send / Deploy / Faucet (RPC) - Premium UI"
-  ];
-}
-
-function showBanner() {
-  const lines = bannerLines();
-  console.log(pastelGradientAscii(lines));
-  console.log('');
-}
-
-function nowDateStr() { return new Date().toISOString().split('T')[0]; }
-
+// ---------- MAIN ----------
 async function main() {
-  console.clear();
   showBanner();
 
   if (!process.env.RPC_URL) {
-    console.log(chalk.red('RPC_URL missing in .env — set it and restart.'));
+    console.log(chalk.red('RPC_URL belum di set di .env'));
     process.exit(1);
   }
+
   const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-  const wallet = process.env.PRIVATE_KEY ? new ethers.Wallet(process.env.PRIVATE_KEY, provider) : null;
-  const walletAddress = wallet ? await wallet.getAddress() : 'NoKey';
+  const wallet = process.env.PRIVATE_KEY
+    ? new ethers.Wallet(process.env.PRIVATE_KEY, provider)
+    : null;
 
-  console.log(chalk.bold('Wallet:'), walletAddress);
-  if (process.env.EXPLORER_BASE) console.log(chalk.bold('Explorer:'), process.env.EXPLORER_BASE);
-  const tokens = parseTokensEnv();
+  const walletAddr = wallet ? await wallet.getAddress() : 'NO_PRIVATE_KEY';
 
-  await loadTokenBalances(provider, walletAddress, tokens);
+  console.log(chalk.bold('Wallet:'), walletAddr);
+  if (process.env.EXPLORER_BASE) {
+    console.log(chalk.bold('Explorer:'), process.env.EXPLORER_BASE);
+  }
+
+  const tokens = parseTokens();
+  await loadBalances(provider, walletAddr, tokens);
 
   console.log(chalk.gray('Loaded tokens:'));
-  tokens.forEach((t,i) => {
-    console.log(`  ${i+1}. ${chalk.cyan(t.symbol)} ${t.address ? (' balance: ' + chalk.yellow(t.balanceHuman)) : ''}`);
+  tokens.forEach((t, i) => {
+    console.log(
+      `  ${i + 1}. ${chalk.cyan(t.symbol)}  balance: ${chalk.yellow(t.balanceHuman)}`
+    );
   });
-  console.log('-------------------------------------------');
 
-  const todayStats = stats.get();
-  console.log(chalk.magenta(` Quick stats (${nowDateStr()}): attempts=${todayStats.attempts} success=${todayStats.success} failed=${todayStats.failed} faucet_claims=${todayStats.faucet_claims} deploys=${todayStats.deploys}`));
-  console.log('1. Send Address (per token / send all)');
-  console.log('2. Deploy Kontrak (Token / NFT)');
-  console.log('3. Claim Faucet (RPC)');
-  console.log('4. Exit');
+  console.log('-------------------------------------------');
+  const s = stats.get();
+  console.log(
+    chalk.magenta(
+      ` Quick stats (${today()}): attempts=${s.attempts} success=${s.success} failed=${s.failed} faucet=${s.faucet_claims} deploys=${s.deploys}`
+    )
+  );
 
   while (true) {
-    const sel = await askNumbered(['Send Address (per token / send all)','Deploy Kontrak (Token / NFT)','Claim Faucet (RPC)','Exit'], 'Pilih menu (masukkan nomor):');
-    if (sel === 3) { console.log('Bye'); process.exit(0); }
+    console.log('');
+    const menu = [
+      'Send Address (per token / send all)',
+      'Deploy Kontrak (Token / NFT)',
+      'Claim Faucet (RPC)',
+      'Exit'
+    ];
+
+    const sel = await askNumbered(menu, 'Pilih menu:');
 
     try {
       if (sel === 0) {
         await sendModule.runSendMenu({ provider, wallet, ethers, tokens, stats });
-        await loadTokenBalances(provider, walletAddress, tokens);
       } else if (sel === 1) {
         await deployModule.runDeployMenu({ provider, wallet, ethers, stats });
       } else if (sel === 2) {
-        await faucetRpc.runInteractive({ provider, wallet, ethers, stats });
+        await faucetModule.runInteractive({ provider, wallet, ethers, stats });
+      } else {
+        console.log(chalk.green('Bye 👋'));
+        process.exit(0);
       }
     } catch (e) {
-      console.error(chalk.red('Fatal error:'), e && e.stack ? e.stack : e);
+      console.error(chalk.red('Fatal error:'), e?.message || e);
     }
 
-    console.log('\nReturning to main menu...\n');
+    // reload balances + stats
+    await loadBalances(provider, walletAddr, tokens);
+    const ns = stats.get();
+    console.log('');
+    console.log(
+      chalk.magenta(
+        ` Updated stats (${today()}): attempts=${ns.attempts} success=${ns.success} failed=${ns.failed}`
+      )
+    );
   }
 }
 
-if (require.main === module) main().catch(e=>{ console.error('Fatal:', e && e.stack ? e.stack : e); process.exit(1); });
+// ---------- run ----------
+if (require.main === module) {
+  main().catch(e => {
+    console.error(chalk.red('Fatal:'), e?.stack || e);
+    process.exit(1);
+  });
+}
+
 module.exports = { main };
