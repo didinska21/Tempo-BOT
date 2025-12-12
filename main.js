@@ -1,15 +1,14 @@
-// main.js - UI premium (gradient banner, chalk colors, ora spinner, quick stats)
-// Requires: ethers v6, inquirer, dotenv, chalk, ora, gradient-string, cli-progress
+// Top of main.js
 require('dotenv').config();
-
 const fs = require('fs');
 const path = require('path');
 const inquirer = require('inquirer');
 const ethers = require('ethers');
 
+// UI libs (ESM -> grab .default)
 const chalk = require('chalk').default;
-const gradient = require('gradient-string');
-const ora = require("ora").default;
+const gradient = require('gradient-string').default || require('gradient-string');
+const ora = require('ora').default;
 
 const sendModule = require('./send');
 const deployModule = require('./deploy');
