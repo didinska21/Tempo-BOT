@@ -1,3 +1,7 @@
+// send.js - UI premium (round-robin "Send Semua Token") + gas overrides + retries
+// Requires: ethers v6, inquirer, chalk (.default), ora (.default), cli-progress
+// Expects CommonJS (require). Compatible with main.js premium UI.
+
 const inquirer = require('inquirer');
 const chalk = require('chalk').default;
 const ora = require('ora').default;
@@ -39,7 +43,7 @@ function parseGweiToWei(ethers, str) {
 }
 function formatGwei(ethers, big) { try { return ethers.formatUnits(big, 9); } catch { return String(big); } }
 
-// ask gas overrides (same UX as before, ora/spinner used in main)
+// ask gas overrides (same UX as before)
 async function askGasOverrides(provider, ethers) {
   const feeData = await provider.getFeeData();
   const supports1559 = feeData.maxFeePerGas && feeData.maxPriorityFeePerGas;
@@ -157,7 +161,7 @@ async function getTokenBalance(provider, token, address, ethers) {
   }
 }
 
-// MAIN runSendMenu with progress bar
+// MAIN runSendMenu with round-robin send_all
 async function runSendMenu({ provider, wallet, tokens, ethers, incStat }) {
   const safeInc = typeof incStat === 'function' ? incStat : () => {};
 
@@ -210,19 +214,24 @@ async function runSendMenu({ provider, wallet, tokens, ethers, incStat }) {
 
     const countNum = Number(sendCount);
 
-    // Estimate total work for progress bar (rough)
+    // Estimate total work for progress bar (for send_all compute sum of max sends)
     let totalPlanned = 0;
     if (menu === 'send_all') {
-      // naive: tokens.length * countNum (if countNum=0, try estimate via balance/amount)
-      for (const token of tokens) {
-        if (countNum === 0) {
+      // compute per-token max send if countNum==0
+      if (countNum === 0) {
+        // sum across tokens floor(balance/amount)
+        for (const token of tokens) {
           const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
           if (balInfo.bal && balInfo.dec) {
             const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
-            const maxN = Number(balInfo.bal / unitAmount);
-            totalPlanned += Math.max(0, maxN);
+            if (BigInt(unitAmount) > 0n) {
+              const maxN = Number(BigInt(balInfo.bal) / BigInt(unitAmount));
+              totalPlanned += Math.max(0, maxN);
+            }
           }
-        } else totalPlanned += countNum;
+        }
+      } else {
+        totalPlanned = tokens.length * countNum;
       }
     } else {
       const token = tokens[menu];
@@ -230,7 +239,7 @@ async function runSendMenu({ provider, wallet, tokens, ethers, incStat }) {
         const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
         if (balInfo.bal && balInfo.dec) {
           const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
-          totalPlanned = Number(balInfo.bal / unitAmount);
+          totalPlanned = Number(BigInt(balInfo.bal) / BigInt(unitAmount));
         } else totalPlanned = 0;
       } else totalPlanned = countNum;
     }
@@ -249,31 +258,81 @@ async function runSendMenu({ provider, wallet, tokens, ethers, incStat }) {
     // helper to advance progress
     function advanceOne() { try { progress.increment(1); } catch (e) {} }
 
-    // send loops
+    // --------------------
+    // SEND ALL (round-robin)
+    // --------------------
     if (menu === 'send_all') {
-      for (const token of tokens) {
-        let sentForToken = 0;
-        while (countNum === 0 ? true : sentForToken < countNum) {
+      // Prepare per-token remaining counts
+      const remaining = [];
+      if (countNum === 0) {
+        // until depleted: compute per-token max sends
+        for (const token of tokens) {
           const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
-          if (!balInfo.bal) { console.log(chalk.yellow(`[${now()}] Failed reading ${token.symbol}, skip.`)); break; }
+          if (balInfo.bal && balInfo.dec) {
+            const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
+            const maxN = unitAmount > 0n ? Number(BigInt(balInfo.bal) / BigInt(unitAmount)) : 0;
+            remaining.push(Math.max(0, maxN));
+          } else {
+            remaining.push(0);
+          }
+        }
+      } else {
+        // fixed count per token
+        for (let i=0;i<tokens.length;i++) remaining.push(countNum);
+      }
+
+      // total remaining overall
+      let totalRemaining = remaining.reduce((a,b)=>a+b,0);
+      // round-robin: iterate while there is any remaining
+      while (totalRemaining > 0) {
+        for (let idx = 0; idx < tokens.length; idx++) {
+          if (remaining[idx] <= 0) continue; // skip if none left for this token
+
+          const token = tokens[idx];
+
+          // check balance just-in-time
+          const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+          if (!balInfo.bal) {
+            console.log(chalk.yellow(`[${now()}] Failed reading ${token.symbol}, skip.`));
+            remaining[idx] = 0;
+            totalRemaining = remaining.reduce((a,b)=>a+b,0);
+            continue;
+          }
           const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
           if (BigInt(balInfo.bal) < BigInt(unitAmount)) {
-            console.log(chalk.yellow(`[${now()}] Insufficient ${token.symbol} balance (${balInfo.human}), skip token.`));
-            break;
+            console.log(chalk.yellow(`[${now()}] Insufficient ${token.symbol} balance (${balInfo.human}), stop sending this token.`));
+            remaining[idx] = 0;
+            totalRemaining = remaining.reduce((a,b)=>a+b,0);
+            continue;
           }
+
+          // destination - random per-send (keinginan awal: random generate per tx) or manual once earlier
           const to = destType === 'random' ? ethers.Wallet.createRandom().address : manualTo;
 
+          // attempt send
           attempts++; safeInc('attempt');
           const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3, gasOverrides, safeInc);
           advanceOne();
-          if (res.success) { success++; safeInc('success'); if (res.receipt) logConfirmed(res.txHash, process.env.EXPLORER_BASE || '', token.symbol, amount, to, res.receipt); else console.log(chalk.green(`[${now()}] ✅ SENT ${short(res.txHash)}`)); sentForToken++; }
-          else { failed++; safeInc('failed'); }
+          if (res.success) {
+            success++; safeInc('success');
+            if (res.receipt) logConfirmed(res.txHash, process.env.EXPLORER_BASE || '', token.symbol, amount, to, res.receipt);
+            else console.log(chalk.green(`[${now()}] ✅ SENT ${short(res.txHash)}`));
+            remaining[idx] = Math.max(0, remaining[idx] - 1);
+          } else {
+            failed++; safeInc('failed');
+            // on failure after retries, we skip this send (decrement to avoid infinite loop)
+            remaining[idx] = Math.max(0, remaining[idx] - 1);
+          }
 
-          if (!(countNum === 0 ? true : sentForToken < countNum)) break;
+          totalRemaining = remaining.reduce((a,b)=>a+b,0);
+
+          // small pause
+          if (totalRemaining <= 0) break;
           await new Promise(r => setTimeout(r, Number(process.env.INTERVAL_MS || 1500)));
-        }
-      }
+        } // end for tokens
+      } // end while totalRemaining
     } else {
+      // single token flow (unchanged)
       const token = tokens[menu];
       let sentForToken = 0;
       while (countNum === 0 ? true : sentForToken < countNum) {
