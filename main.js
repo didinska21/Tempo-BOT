@@ -9,7 +9,7 @@ const ethers = require('ethers');
 
 const chalk = require('chalk').default;
 const gradient = require('gradient-string');
-const ora = require('ora');
+const ora = require("ora").default;
 
 const sendModule = require('./send');
 const deployModule = require('./deploy');
