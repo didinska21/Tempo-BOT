@@ -1,15 +1,21 @@
 {
   "name": "auto-tx-didinska",
   "version": "1.0.0",
-  "description": "auto.tx by didinska — token sender & contract deployer",
+  "description": "Auto TX CLI by didinska — premium UI edition",
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node main.js"
+    "start": "node main.js",
+    "send": "node send.js",
+    "deploy": "node deploy.js"
   },
   "dependencies": {
+    "chalk": "^5.3.0",
+    "cli-progress": "^3.12.0",
     "dotenv": "^17.2.3",
-    "ethers": "^6.12.1",
-    "inquirer": "^9.2.10"
+    "ethers": "^6.12.2",
+    "gradient-string": "^2.0.2",
+    "inquirer": "^9.2.14",
+    "ora": "^8.0.1"
   }
 }
