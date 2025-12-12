@@ -1,8 +1,12 @@
-// send.js — concise logs + spinner + retry (max 3) + summary
-// Compatible with ethers v6 and previous project structure.
-// No external deps beyond inquirer and ethers.
+// send.js - UI premium (progress bar, ora, chalk) + gas overrides + retries
+// Requires: ethers v6, inquirer, chalk, ora, cli-progress, gradient-string (main handles gradient)
 
 const inquirer = require('inquirer');
+const chalk = require('chalk');
+const ora = require('ora');
+const { SingleBar, Presets } = require('cli-progress');
+const ethers = require('ethers');
+
 const prompt = (inquirer.createPromptModule && inquirer.createPromptModule()) || inquirer.prompt;
 
 const ERC20_ABI = [
@@ -11,68 +15,104 @@ const ERC20_ABI = [
   "function transfer(address to, uint amount) returns (bool)"
 ];
 
-// simple ANSI colors (no dependency)
-const COL = {
-  reset: "\x1b[0m",
-  bright: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m"
-};
+function now() { return new Date().toISOString(); }
+function short(h) { if (!h) return ''; return h.length > 18 ? h.slice(0,10) + '...' + h.slice(-6) : h; }
 
-function now() {
-  return new Date().toISOString();
-}
-
-function short(hash) {
-  if (!hash) return '';
-  return hash.length > 18 ? hash.slice(0,10) + '...' + hash.slice(-6) : hash;
-}
-
-// spinner helper
-function startSpinner(text) {
-  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-  let i = 0;
-  const id = setInterval(() => {
-    process.stdout.write(`\r${frames[i % frames.length]} ${text} `);
-    i++;
-  }, 80);
-  return id;
-}
-function stopSpinner(id, clearLine = true) {
-  if (id) clearInterval(id);
-  if (clearLine) process.stdout.write('\r\x1b[K');
-}
-
-// print concise success/failed line
-function printSuccess(txHash, explorerBase, tokenSymbol, amount, to, receipt) {
-  const ts = now();
-  const h = short(txHash);
+// print helpers (clean)
+function logSent(txHash, explorerBase, tokenSymbol, amount, to) {
   const link = explorerBase ? `${explorerBase}/tx/${txHash}` : '';
-  console.log(`${COL.green}[${ts}] ✅ CONFIRMED ${h}${COL.reset}` + (link ? ` ${COL.cyan}${link}${COL.reset}` : ''));
-  console.log(`  ${COL.dim}token:${COL.reset} ${tokenSymbol}  ${COL.dim}amount:${COL.reset} ${amount}  ${COL.dim}to:${COL.reset} ${to}`);
-  if (receipt) {
-    console.log(`  ${COL.dim}block:${COL.reset} ${receipt.blockNumber}  ${COL.dim}gasUsed:${COL.reset} ${String(receipt.gasUsed)}`);
+  console.log(chalk.yellow(`[${now()}] ➜ SENT ${short(txHash)}`) + (link ? ` ${chalk.cyan(link)}` : ''));
+  console.log(`  ${chalk.dim('token:')} ${tokenSymbol}  ${chalk.dim('amount:')} ${amount}  ${chalk.dim('to:')} ${to}`);
+}
+function logConfirmed(txHash, explorerBase, tokenSymbol, amount, to, receipt) {
+  const link = explorerBase ? `${explorerBase}/tx/${txHash}` : '';
+  console.log(chalk.green(`[${now()}] ✅ CONFIRMED ${short(txHash)}`) + (link ? ` ${chalk.cyan(link)}` : ''));
+  console.log(`  ${chalk.dim('token:')} ${tokenSymbol}  ${chalk.dim('amount:')} ${amount}  ${chalk.dim('to:')} ${to}`);
+  if (receipt) console.log(`  ${chalk.dim('block:')} ${receipt.blockNumber}  ${chalk.dim('gasUsed:')} ${String(receipt.gasUsed)}`);
+}
+function logFailed(reason, tokenSymbol, amount, to, attempt) {
+  console.log(chalk.red(`[${now()}] ❌ FAILED (attempt ${attempt})`));
+  console.log(`  ${chalk.dim(reason)}`);
+  console.log(`  ${chalk.dim('token:')} ${tokenSymbol}  ${chalk.dim('amount:')} ${amount}  ${chalk.dim('to:')} ${to}`);
+}
+
+// parse gwei helper
+function parseGweiToWei(ethers, str) {
+  try { return ethers.parseUnits(String(str), 9); } catch (e) { return null; }
+}
+function formatGwei(ethers, big) { try { return ethers.formatUnits(big, 9); } catch { return String(big); } }
+
+// ask gas overrides (same UX as before, ora/spinner used in main)
+async function askGasOverrides(provider, ethers) {
+  const feeData = await provider.getFeeData();
+  const supports1559 = feeData.maxFeePerGas && feeData.maxPriorityFeePerGas;
+  const suggested = { maxFeePerGas: feeData.maxFeePerGas ?? null, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? null, gasPrice: feeData.gasPrice ?? null };
+
+  console.log('\nSuggested fee data (from provider):');
+  if (supports1559) {
+    console.log(`  maxFeePerGas (gwei): ${formatGwei(ethers, suggested.maxFeePerGas)}`);
+    console.log(`  maxPriorityFeePerGas (gwei): ${formatGwei(ethers, suggested.maxPriorityFeePerGas)}`);
+  } else if (suggested.gasPrice) {
+    console.log(`  gasPrice (gwei): ${formatGwei(ethers, suggested.gasPrice)}`);
+  } else {
+    console.log('  (no fee data available from provider)');
+  }
+  const { useDefault } = await prompt([{ type:'confirm', name:'useDefault', message:'Use suggested/default fee data?', default:true }]);
+  if (useDefault) {
+    const overrides = {};
+    if (supports1559) {
+      if (suggested.maxFeePerGas) overrides.maxFeePerGas = suggested.maxFeePerGas;
+      if (suggested.maxPriorityFeePerGas) overrides.maxPriorityFeePerGas = suggested.maxPriorityFeePerGas;
+    } else if (suggested.gasPrice) {
+      overrides.gasPrice = suggested.gasPrice;
+    }
+    const { setGasLimit } = await prompt([{ type:'confirm', name:'setGasLimit', message:'Set custom gasLimit? (otherwise use estimate)', default:false }]);
+    if (setGasLimit) {
+      const { gasLimit } = await prompt([{ type:'input', name:'gasLimit', message:'gasLimit (numeric):', validate: v => !isNaN(Number(v)) && Number(v)>0 ? true : 'Masukkan angka > 0' }]);
+      overrides.gasLimit = BigInt(Number(gasLimit));
+    }
+    return overrides;
+  }
+  if (supports1559) {
+    const res = await prompt([
+      { type:'input', name:'maxFee', message:'maxFeePerGas (gwei):', default: formatGwei(ethers, suggested.maxFeePerGas) || '2', validate: v => !isNaN(Number(v)) && Number(v)>0 ? true : 'Masukkan angka gwei > 0' },
+      { type:'input', name:'priority', message:'maxPriorityFeePerGas (gwei):', default: formatGwei(ethers, suggested.maxPriorityFeePerGas) || '1', validate: v => !isNaN(Number(v)) && Number(v)>=0 ? true : 'Masukkan angka gwei >= 0' },
+      { type:'input', name:'gasLimit', message:'gasLimit (optional):', default: '' }
+    ]);
+    const overrides = {};
+    const m = parseGweiToWei(ethers, res.maxFee);
+    const p = parseGweiToWei(ethers, res.priority);
+    if (m) overrides.maxFeePerGas = m;
+    if (p) overrides.maxPriorityFeePerGas = p;
+    if (res.gasLimit && res.gasLimit.trim() !== '') overrides.gasLimit = BigInt(Number(res.gasLimit));
+    if (overrides.gasLimit && overrides.maxFeePerGas) {
+      try {
+        const weiFee = BigInt(overrides.gasLimit) * BigInt(overrides.maxFeePerGas);
+        console.log(`Estimated tx fee (wei): ${String(weiFee)} (~ ${ethers.formatEther(weiFee)} ETH)`);
+      } catch {}
+    }
+    return overrides;
+  } else {
+    const res = await prompt([
+      { type:'input', name:'gasPrice', message:'gasPrice (gwei):', default: formatGwei(ethers, suggested.gasPrice) || '2', validate: v => !isNaN(Number(v)) && Number(v)>0 ? true : 'Masukkan angka gwei > 0' },
+      { type:'input', name:'gasLimit', message:'gasLimit (optional):', default: '' }
+    ]);
+    const overrides = {};
+    const gp = parseGweiToWei(ethers, res.gasPrice);
+    if (gp) overrides.gasPrice = gp;
+    if (res.gasLimit && res.gasLimit.trim() !== '') overrides.gasLimit = BigInt(Number(res.gasLimit));
+    if (overrides.gasLimit && overrides.gasPrice) {
+      try {
+        const weiFee = BigInt(overrides.gasLimit) * BigInt(overrides.gasPrice);
+        console.log(`Estimated tx fee (wei): ${String(weiFee)} (~ ${ethers.formatEther(weiFee)} ETH)`);
+      } catch {}
+    }
+    return overrides;
   }
 }
-function printSent(txHash, explorerBase, tokenSymbol, amount, to) {
-  const ts = now();
-  const h = short(txHash);
-  const link = explorerBase ? `${explorerBase}/tx/${txHash}` : '';
-  console.log(`${COL.yellow}[${ts}] ➜ SENT ${h}${COL.reset}` + (link ? ` ${COL.cyan}${link}${COL.reset}` : ''));
-  console.log(`  ${COL.dim}token:${COL.reset} ${tokenSymbol}  ${COL.dim}amount:${COL.reset} ${amount}  ${COL.dim}to:${COL.reset} ${to}`);
-}
-function printFailed(reason, tokenSymbol, amount, to, attempt) {
-  const ts = now();
-  console.log(`${COL.red}[${ts}] ❌ FAILED (${attempt}) ${COL.reset}`);
-  console.log(`  ${COL.dim}${reason}${COL.reset}`);
-  console.log(`  ${COL.dim}token:${COL.reset} ${tokenSymbol}  ${COL.dim}amount:${COL.reset} ${amount}  ${COL.dim}to:${COL.reset} ${to}`);
-}
 
-// core: send once with retries
-async function sendERC20WithRetries(provider, wallet, ethers, token, to, amountHuman, waitConfirm, maxRetries=3) {
+// send once with retries and incStat
+async function sendERC20WithRetries(provider, wallet, ethers, token, to, amountHuman, waitConfirm, maxRetries = 3, gasOverrides = {}, incStat) {
   const contract = new ethers.Contract(token.address, ERC20_ABI, wallet);
   const decimals = await contract.decimals();
   const amountUnits = ethers.parseUnits(String(amountHuman), decimals);
@@ -81,44 +121,34 @@ async function sendERC20WithRetries(provider, wallet, ethers, token, to, amountH
   while (attempt < maxRetries) {
     attempt++;
     try {
-      // send transaction
-      const tx = await contract.transfer(to, amountUnits);
-      // printed as SENT concise
-      printSent(tx.hash, process.env.EXPLORER_BASE || '', token.symbol, amountHuman, to);
+      if (typeof incStat === 'function') incStat('attempt');
+      const tx = await contract.transfer(to, amountUnits, gasOverrides);
+      logSent(tx.hash, process.env.EXPLORER_BASE || '', token.symbol, amountHuman, to);
 
-      // wait for 1 confirm if asked, using spinner
       let receipt = null;
       if (waitConfirm) {
-        const spinnerId = startSpinner(`waiting confirm ${short(tx.hash)} (attempt ${attempt})`);
-        try {
-          receipt = await tx.wait(1);
-        } finally {
-          stopSpinner(spinnerId);
-        }
+        const spinner = ora(`Waiting confirm ${short(tx.hash)} (attempt ${attempt})`).start();
+        try { receipt = await tx.wait(1); } finally { spinner.stop(); }
       }
-      // success
+
+      if (typeof incStat === 'function') incStat('success');
       return { success: true, txHash: tx.hash, receipt };
     } catch (err) {
-      // capture error message
       const msg = (err && err.message) ? err.message : String(err);
-      // if last attempt, return failure
       if (attempt >= maxRetries) {
-        printFailed(msg, token.symbol, amountHuman, to, attempt);
+        if (typeof incStat === 'function') incStat('failed');
+        logFailed(msg, token.symbol, amountHuman, to, attempt);
         return { success: false, error: msg };
       } else {
-        // print retry warn and loop
-        console.log(`${COL.yellow}[${now()}] ⚠ retrying (${attempt}/${maxRetries}) due to: ${msg}${COL.reset}`);
-        // small backoff
+        console.log(chalk.yellow(`[${now()}] ⚠ retrying (${attempt}/${maxRetries}) due to: ${msg}`));
         await new Promise(r => setTimeout(r, 1000 * attempt));
-        continue;
       }
     }
   }
-  // fallback
+  if (typeof incStat === 'function') incStat('failed');
   return { success: false, error: 'unknown' };
 }
 
-// helper to get token balance (raw and human)
 async function getTokenBalance(provider, token, address, ethers) {
   try {
     const c = new ethers.Contract(token.address, ERC20_ABI, provider);
@@ -130,12 +160,11 @@ async function getTokenBalance(provider, token, address, ethers) {
   }
 }
 
-// main menu runner (exports)
-async function runSendMenu({ provider, wallet, tokens, ethers }) {
-  const explorerBase = process.env.EXPLORER_BASE || '';
+// MAIN runSendMenu with progress bar
+async function runSendMenu({ provider, wallet, tokens, ethers, incStat }) {
+  const safeInc = typeof incStat === 'function' ? incStat : () => {};
 
   while (true) {
-    // menu choices
     const choices = tokens.map((t,i)=>({
       name: `Send Token: ${t.symbol}` + (t.balanceHuman ? ` — balance: ${t.balanceHuman}` : ''),
       value: i
@@ -146,126 +175,135 @@ async function runSendMenu({ provider, wallet, tokens, ethers }) {
     const { menu } = await prompt([{ type:'list', name:'menu', message:'Send Address - pilih:', choices }]);
     if (menu === 'back') return;
 
-    // target selection (for single token or send_all)
-    let targetMode = null;
+    // choose destination
+    let destType;
     if (menu === 'send_all') {
-      const ans = await prompt([{
-        type:'list', name:'destType', message:'Pilih tujuan untuk Send Semua Token:', choices:[
-          { name:'Send to Random Address', value:'random' },
-          { name:'Send to Manual Address', value:'manual' },
-          { name:'Back', value:'back' }
-        ]
-      }]);
+      const ans = await prompt([{ type:'list', name:'destType', message:'Pilih tujuan untuk Send Semua Token:', choices:[
+        { name:'Send to Random Address', value:'random' },
+        { name:'Send to Manual Address', value:'manual' },
+        { name:'Back', value:'back' }
+      ] }]);
       if (ans.destType === 'back') continue;
-      targetMode = ans.destType;
+      destType = ans.destType;
     } else {
-      const ans = await prompt([{
-        type:'list', name:'destType', message:`Tujuan untuk ${tokens[menu].symbol}:`, choices:[
-          { name:'Send to Random Address', value:'random' },
-          { name:'Send to Manual Address', value:'manual' },
-          { name:'Back', value:'back' }
-        ]
-      }]);
+      const ans = await prompt([{ type:'list', name:'destType', message:`Tujuan untuk ${tokens[menu].symbol}:`, choices:[
+        { name:'Send to Random Address', value:'random' },
+        { name:'Send to Manual Address', value:'manual' },
+        { name:'Back', value:'back' }
+      ] }]);
       if (ans.destType === 'back') continue;
-      targetMode = ans.destType;
+      destType = ans.destType;
     }
 
     let manualTo = null;
-    if (targetMode === 'manual') {
+    if (destType === 'manual') {
       const ans = await prompt([{ type:'input', name:'manualAddress', message:'Masukkan address tujuan:', validate: v => ethers.isAddress(v) ? true : 'Address tidak valid' }]);
       manualTo = ans.manualAddress;
     }
 
-    // common prompts: amount per tx, sendCount, waitConfirm
+    // gas overrides once per session
+    console.log('\n-- Gas / Fee settings (applies to this send session) --');
+    const gasOverrides = await askGasOverrides(provider, ethers);
+    console.log('-- End gas settings --\n');
+
+    // common prompts
     const { amount } = await prompt([{ type:'input', name:'amount', message:'Jumlah yang akan dikirim per tx (per token):', default:'1', validate: v => !isNaN(Number(v)) ? true : 'Masukkan angka valid' }]);
     const { sendCount } = await prompt([{ type:'input', name:'sendCount', message:'Jumlah TX yang akan dikirim (0 = sampai balance habis):', default:'1', validate: v=> { const n=Number(v); return (!isNaN(n) && n>=0) ? true : 'Masukkan angka >=0'; } }]);
     const { waitConfirm } = await prompt([{ type:'confirm', name:'waitConfirm', message:'Tunggu 1 konfirmasi tiap tx?', default: String(process.env.WAIT_CONFIRM||'true')==='true' }]);
+
     const countNum = Number(sendCount);
 
-    // counters
-    let totalAttempts = 0;
-    let totalSuccess = 0;
-    let totalFailed = 0;
-
-    // send_all flow
+    // Estimate total work for progress bar (rough)
+    let totalPlanned = 0;
     if (menu === 'send_all') {
-      // iterate tokens
+      // naive: tokens.length * countNum (if countNum=0, try estimate via balance/amount)
       for (const token of tokens) {
-        // reset per-token counters
+        if (countNum === 0) {
+          const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+          if (balInfo.bal && balInfo.dec) {
+            const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
+            const maxN = Number(balInfo.bal / unitAmount);
+            totalPlanned += Math.max(0, maxN);
+          }
+        } else totalPlanned += countNum;
+      }
+    } else {
+      const token = tokens[menu];
+      if (countNum === 0) {
+        const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+        if (balInfo.bal && balInfo.dec) {
+          const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
+          totalPlanned = Number(balInfo.bal / unitAmount);
+        } else totalPlanned = 0;
+      } else totalPlanned = countNum;
+    }
+    if (totalPlanned <= 0) totalPlanned = 1; // avoid zero bar
+
+    const progress = new SingleBar({
+      format: 'Progress |' + chalk.cyan('{bar}') + '| {value}/{total} TXs | ETA: {eta_formatted}',
+      hideCursor: true
+    }, Presets.rect);
+
+    progress.start(totalPlanned, 0);
+
+    // counters
+    let attempts = 0, success = 0, failed = 0;
+
+    // helper to advance progress
+    function advanceOne() { try { progress.increment(1); } catch (e) {} }
+
+    // send loops
+    if (menu === 'send_all') {
+      for (const token of tokens) {
         let sentForToken = 0;
         while (countNum === 0 ? true : sentForToken < countNum) {
-          // check balance
-          const { bal, dec, human } = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
-          if (bal == null || dec == null) { tlog(`Failed reading balance for ${token.symbol}, skipping.`); break; }
-          const unitAmount = ethers.parseUnits(String(amount), dec);
-          if (BigInt(bal) < BigInt(unitAmount)) {
-            tlog(`${COL.yellow}[${now()}] Insufficient ${token.symbol} balance (${human}), skip token.${COL.reset}`);
+          const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+          if (!balInfo.bal) { console.log(chalk.yellow(`[${now()}] Failed reading ${token.symbol}, skip.`)); break; }
+          const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
+          if (BigInt(balInfo.bal) < BigInt(unitAmount)) {
+            console.log(chalk.yellow(`[${now()}] Insufficient ${token.symbol} balance (${balInfo.human}), skip token.`));
             break;
           }
+          const to = destType === 'random' ? ethers.Wallet.createRandom().address : manualTo;
 
-          // destination
-          const to = (targetMode === 'random') ? ethers.Wallet.createRandom().address : manualTo;
+          attempts++; safeInc('attempt');
+          const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3, gasOverrides, safeInc);
+          advanceOne();
+          if (res.success) { success++; safeInc('success'); if (res.receipt) logConfirmed(res.txHash, process.env.EXPLORER_BASE || '', token.symbol, amount, to, res.receipt); else console.log(chalk.green(`[${now()}] ✅ SENT ${short(res.txHash)}`)); sentForToken++; }
+          else { failed++; safeInc('failed'); }
 
-          // send with retries
-          totalAttempts++;
-          const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3);
-          if (res.success) {
-            totalSuccess++;
-            sentForToken++;
-            // print confirmed if receipt exists, otherwise just show sent
-            if (res.receipt) printSuccess(res.txHash, explorerBase, token.symbol, amount, to, res.receipt);
-            else console.log(`${COL.green}[${now()}] ✅ SENT ${short(res.txHash)}${COL.reset}`);
-          } else {
-            totalFailed++;
-          }
-
-          // break if count specified and reached
           if (!(countNum === 0 ? true : sentForToken < countNum)) break;
-          // interval
-          const interval = Number(process.env.INTERVAL_MS || 1500);
-          await new Promise(r => setTimeout(r, interval));
-        } // end while per token
-      } // end for tokens
-
+          await new Promise(r => setTimeout(r, Number(process.env.INTERVAL_MS || 1500)));
+        }
+      }
     } else {
-      // single token flow
       const token = tokens[menu];
       let sentForToken = 0;
       while (countNum === 0 ? true : sentForToken < countNum) {
-        // check balance
-        const { bal, dec, human } = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
-        if (bal == null || dec == null) { tlog(`Failed reading balance for ${token.symbol}, abort.`); break; }
-        const unitAmount = ethers.parseUnits(String(amount), dec);
-        if (BigInt(bal) < BigInt(unitAmount)) {
-          tlog(`${COL.yellow}[${now()}] Insufficient ${token.symbol} balance (${human}), stop.${COL.reset}`);
-          break;
-        }
+        const balInfo = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+        if (!balInfo.bal) { console.log(chalk.yellow(`[${now()}] Failed reading ${token.symbol}, abort.`)); break; }
+        const unitAmount = ethers.parseUnits(String(amount), balInfo.dec);
+        if (BigInt(balInfo.bal) < BigInt(unitAmount)) { console.log(chalk.yellow(`[${now()}] Insufficient ${token.symbol} balance (${balInfo.human}), stop.`)); break; }
+        const to = destType === 'random' ? ethers.Wallet.createRandom().address : manualTo;
 
-        const to = (targetMode === 'random') ? ethers.Wallet.createRandom().address : manualTo;
-        totalAttempts++;
-        const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3);
-        if (res.success) {
-          totalSuccess++;
-          sentForToken++;
-          if (res.receipt) printSuccess(res.txHash, explorerBase, token.symbol, amount, to, res.receipt);
-          else console.log(`${COL.green}[${now()}] ✅ SENT ${short(res.txHash)}${COL.reset}`);
-        } else {
-          totalFailed++;
-        }
+        attempts++; safeInc('attempt');
+        const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3, gasOverrides, safeInc);
+        advanceOne();
+        if (res.success) { success++; safeInc('success'); if (res.receipt) logConfirmed(res.txHash, process.env.EXPLORER_BASE || '', token.symbol, amount, to, res.receipt); else console.log(chalk.green(`[${now()}] ✅ SENT ${short(res.txHash)}`)); sentForToken++; }
+        else { failed++; safeInc('failed'); }
 
         if (!(countNum === 0 ? true : sentForToken < countNum)) break;
-        const interval = Number(process.env.INTERVAL_MS || 1500);
-        await new Promise(r => setTimeout(r, interval));
-      } // end while
+        await new Promise(r => setTimeout(r, Number(process.env.INTERVAL_MS || 1500)));
+      }
     }
 
-    // summary for this session
-    console.log('\n' + COL.bright + '=== SESSION SUMMARY ===' + COL.reset);
-    console.log(`Total attempts: ${totalAttempts}`);
-    console.log(`${COL.green}Succeeded: ${totalSuccess}${COL.reset}  ${COL.red}Failed: ${totalFailed}${COL.reset}`);
-    console.log('========================\n');
+    progress.stop();
 
-  } // end main while
+    console.log('\n' + chalk.bold('=== SESSION SUMMARY ==='));
+    console.log(`Total attempts: ${attempts}`);
+    console.log(chalk.green(`Succeeded: ${success}`) + '  ' + chalk.red(`Failed: ${failed}`));
+    console.log('========================\n');
+  }
 }
 
 module.exports = { runSendMenu };
