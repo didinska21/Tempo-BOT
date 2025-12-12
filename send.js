@@ -1,9 +1,6 @@
-// send.js - UI premium (progress bar, ora, chalk) + gas overrides + retries
-// Requires: ethers v6, inquirer, chalk, ora, cli-progress, gradient-string (main handles gradient)
-
 const inquirer = require('inquirer');
-const chalk = require('chalk');
-const ora = require('ora');
+const chalk = require('chalk').default;
+const ora = require('ora').default;
 const { SingleBar, Presets } = require('cli-progress');
 const ethers = require('ethers');
 
