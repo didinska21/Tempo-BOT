@@ -1,7 +1,7 @@
 // send.js — clean version (NO NATIVE), menu per-token + send all tokens
 // Requires: ethers v6, inquirer
 const inquirer = require('inquirer');
-
+const EXPLORER_BASE = "https://explore.tempo.xyz";
 const prompt = (inquirer.createPromptModule && inquirer.createPromptModule()) || inquirer.prompt;
 
 const ERC20_ABI = [
