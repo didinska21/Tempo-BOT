@@ -1,218 +1,131 @@
-// main.js - full updated file (readline numeric menu, ESM-safe imports, no gas prompts)
-// Replace your existing main.js with this file.
-
+// main.js - unified CLI with premium ASCII pastel banner + daily stats
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const inquirer = require('inquirer'); // still used by send.js for some prompts
 const ethers = require('ethers');
 const readline = require('readline');
-
-// ESM-safe requires for CommonJS
-const chalkReq = require('chalk');
-const chalk = chalkReq && chalkReq.default ? chalkReq.default : chalkReq;
-
-let ora;
-try {
-  const oraReq = require('ora');
-  ora = oraReq && oraReq.default ? oraReq.default : oraReq;
-} catch (e) {
-  ora = null;
-}
-
-let gradient;
-try {
-  const g = require('gradient-string');
-  gradient = g && g.default ? g.default : g;
-} catch (e) {
-  gradient = null;
-}
+const chalk = require('chalk');
 
 const sendModule = require('./send');
 const deployModule = require('./deploy');
+const faucetRpc = require('./faucet_rpc');
+const stats = require('./data/stats');
 
-// Data / stats
-const DATA_DIR = path.join(process.cwd(), 'data');
-const STATS_FILE = path.join(DATA_DIR, 'stats.json');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const BUILD_DIR = path.join(process.cwd(), 'build');
+const TOKENS_ENV = process.env.TOKENS || '';
 
-function loadStats() {
-  try {
-    if (!fs.existsSync(STATS_FILE)) return {};
-    const raw = fs.readFileSync(STATS_FILE, 'utf8') || '{}';
-    return JSON.parse(raw);
-  } catch (e) {
-    return {};
-  }
-}
-function saveStats(obj) {
-  try { fs.writeFileSync(STATS_FILE, JSON.stringify(obj, null, 2), 'utf8'); } catch (e) {}
-}
-function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function ensureTodayStats() {
-  const s = loadStats();
-  const k = todayKey();
-  if (!s[k]) s[k] = { attempts:0, success:0, failed:0 };
-  saveStats(s);
-  return s;
-}
-function incStat(type) {
-  const s = loadStats();
-  const k = todayKey();
-  if (!s[k]) s[k] = { attempts:0, success:0, failed:0 };
-  if (type === 'attempt') s[k].attempts++;
-  if (type === 'success') s[k].success++;
-  if (type === 'failed') s[k].failed++;
-  saveStats(s);
-}
+function rlQuestion(q){ const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); return new Promise(res => rl.question(q, a => { rl.close(); res(a); })); }
+async function askNumbered(items, prompt='Pilih (masukkan nomor):'){ items.forEach((it,i)=>console.log(`${i+1}. ${it}`)); while(true){ const a = (await rlQuestion(prompt+' ')).trim(); const n=Number(a); if(!Number.isNaN(n) && n>=1 && n<=items.length) return n-1; console.log('Masukkan nomor valid.'); } }
 
-// parse tokens from .env TOKENS env var (format: SYMBOL:0x... , SYMBOL2:0x..., ...)
-function parseTokensFromEnv() {
-  const raw = (process.env.TOKENS || '').trim();
-  if (!raw) {
-    return [
-      { symbol: 'PathUSD', address: '0x20c0000000000000000000000000000000000000' },
-      { symbol: 'ThetaUSD', address: '0x20c0000000000000000000000000000000000003' },
-      { symbol: 'BetaUSD', address: '0x20c0000000000000000000000000000000000002' },
-      { symbol: 'AlphaUSD', address: '0x20c0000000000000000000000000000000000001' }
-    ];
-  }
-  return raw.split(',').map(s => {
-    const [sym, addr] = s.split(':').map(x => x && x.trim());
-    return { symbol: sym || addr, address: addr || '' };
-  }).filter(t => t.address);
-}
-
-// load token balances (safe)
-async function loadTokenBalances(provider, wallet, tokens) {
-  const spinner = ora ? ora({ text: 'Loading token balances...', spinner: 'dots' }).start() : null;
-  const ABI = ['function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)'];
-  try {
-    const addr = await wallet.getAddress();
-    for (const t of tokens) {
-      try {
-        const c = new ethers.Contract(t.address, ABI, provider);
-        const dec = await c.decimals();
-        const bal = await c.balanceOf(addr);
-        t.decimals = dec;
-        t.balanceRaw = bal;
-        t.balanceHuman = ethers.formatUnits(bal, dec);
-      } catch (e) {
-        t.decimals = null; t.balanceRaw = null; t.balanceHuman = 'err';
-      }
-    }
-    if (spinner) spinner.succeed('Balances loaded');
-  } catch (e) {
-    if (spinner) spinner.fail('Failed loading balances');
-  }
-}
-
-// header printing
-function printHeader(walletAddr, tokens) {
-  console.clear();
-  try {
-    if (gradient) {
-      console.log(gradient(['#4ade80','#60a5fa','#c084fc'])('==========================================='));
-      console.log(gradient(['#4ade80','#60a5fa','#c084fc'])('  auto.tx by didinska'));
-      console.log(gradient(['#4ade80','#60a5fa','#c084fc'])('==========================================='));
-    } else {
-      console.log(chalk.cyan('==========================================='));
-      console.log(chalk.cyan('  auto.tx by didinska'));
-      console.log(chalk.cyan('==========================================='));
-    }
-  } catch (e) {
-    console.log('===========================================');
-    console.log('  auto.tx by didinska');
-    console.log('===========================================');
-  }
-
-  console.log('');
-  console.log(chalk.dim('Wallet:') + ' ' + chalk.green(walletAddr));
-  console.log(chalk.dim('Explorer:') + ' ' + chalk.cyan(process.env.EXPLORER_BASE || '(not set)'));
-  console.log('');
-  console.log(chalk.bold('Loaded tokens:'));
-  tokens.forEach((t,i) => {
-    const bal = (t.balanceHuman && t.balanceHuman !== 'err') ? Number(t.balanceHuman).toLocaleString('en-US') : t.balanceHuman || 'n/a';
-    console.log(`  ${chalk.dim(i+1 + '.')} ${chalk.yellow(t.symbol)}  ${chalk.dim('balance:')} ${bal}`);
+function parseTokensEnv() {
+  return TOKENS_ENV.split(',').map(s => s.trim()).filter(Boolean).map(s => {
+    const [sym, addr] = s.split(':').map(x=>x && x.trim());
+    return { symbol: sym, address: addr };
   });
-  console.log(chalk.gray('-------------------------------------------'));
 }
 
-// readline numeric menu helper (reliable across envs)
-async function askMenuNumber(choices, promptText = 'Pilih menu (masukkan nomor):') {
-  for (let i=0;i<choices.length;i++) {
-    console.log(`${chalk.dim(String(i+1)+'.')} ${choices[i]}`);
+async function loadTokenBalances(provider, walletAddress, tokens) {
+  const abiPath = path.join(BUILD_DIR, 'SimpleERC20.abi.json');
+  let abi = null;
+  if (fs.existsSync(abiPath)) abi = JSON.parse(fs.readFileSync(abiPath,'utf8'));
+  for (const t of tokens) {
+    t.balanceHuman = 'n/a';
+    if (!t.address || !abi) continue;
+    try {
+      const c = new ethers.Contract(t.address, abi, provider);
+      const dec = await c.decimals();
+      const bal = await c.balanceOf(walletAddress);
+      t.balanceHuman = ethers.formatUnits(bal, dec);
+    } catch (e) {
+      t.balanceHuman = 'err';
+    }
   }
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const question = q => new Promise(res => rl.question(q, ans => res(ans)));
-
-  let idx = -1;
-  while (true) {
-    const answer = await question(promptText + ' ');
-    const n = Number(answer);
-    if (!Number.isNaN(n) && n >= 1 && n <= choices.length) { idx = n - 1; break; }
-    console.log(chalk.yellow(`Masukkan angka antara 1 dan ${choices.length}`));
-  }
-  rl.close();
-  return idx;
 }
 
-// main loop
+function pastelGradientAscii(textLines) {
+  // pastel color cycle (soft)
+  const colors = ['#ffd7da','#ffe8b3','#d7f7d2','#d7f0ff','#ecd7ff','#ffd6ea'];
+  // map hex -> chalk hex
+  return textLines.map((line, idx) => {
+    // color by line index
+    const color = colors[idx % colors.length];
+    return chalk.hex(color)(line);
+  }).join('\n');
+}
+
+function bannerLines() {
+  // simple ASCII art, no box style
+  return [
+    "    _            _        _   _____    __  ",
+    "   / \\   _ __ __| | ___  / | |_   _|__|  \\ ",
+    "  / _ \\ | '__/ _` |/ _ \\ | |   | |/ _ \\ |)",
+    " / ___ \\| | | (_| |  __/ | |   | |  __/  / ",
+    "/_/   \\_\\_|  \\__,_|\\___| |_|   |_|\\___|_/  ",
+    "",
+    "            auto.tx by didinska",
+    "     Send / Deploy / Faucet (RPC) - Premium UI"
+  ];
+}
+
+function showBanner() {
+  const lines = bannerLines();
+  console.log(pastelGradientAscii(lines));
+  console.log('');
+}
+
+function nowDateStr() { return new Date().toISOString().split('T')[0]; }
+
 async function main() {
-  if (!process.env.RPC_URL || !process.env.PRIVATE_KEY) {
-    console.error(chalk.red('Please set RPC_URL and PRIVATE_KEY in .env'));
+  console.clear();
+  showBanner();
+
+  if (!process.env.RPC_URL) {
+    console.log(chalk.red('RPC_URL missing in .env — set it and restart.'));
     process.exit(1);
   }
-
   const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-  const tokens = parseTokensFromEnv();
+  const wallet = process.env.PRIVATE_KEY ? new ethers.Wallet(process.env.PRIVATE_KEY, provider) : null;
+  const walletAddress = wallet ? await wallet.getAddress() : 'NoKey';
 
-  await loadTokenBalances(provider, wallet, tokens);
-  ensureTodayStats();
+  console.log(chalk.bold('Wallet:'), walletAddress);
+  if (process.env.EXPLORER_BASE) console.log(chalk.bold('Explorer:'), process.env.EXPLORER_BASE);
+  const tokens = parseTokensEnv();
+
+  await loadTokenBalances(provider, walletAddress, tokens);
+
+  console.log(chalk.gray('Loaded tokens:'));
+  tokens.forEach((t,i) => {
+    console.log(`  ${i+1}. ${chalk.cyan(t.symbol)} ${t.address ? (' balance: ' + chalk.yellow(t.balanceHuman)) : ''}`);
+  });
+  console.log('-------------------------------------------');
+
+  const todayStats = stats.get();
+  console.log(chalk.magenta(` Quick stats (${nowDateStr()}): attempts=${todayStats.attempts} success=${todayStats.success} failed=${todayStats.failed} faucet_claims=${todayStats.faucet_claims} deploys=${todayStats.deploys}`));
+  console.log('1. Send Address (per token / send all)');
+  console.log('2. Deploy Kontrak (Token / NFT)');
+  console.log('3. Claim Faucet (RPC)');
+  console.log('4. Exit');
 
   while (true) {
-    const walletAddr = await wallet.getAddress();
-    printHeader(walletAddr, tokens);
+    const sel = await askNumbered(['Send Address (per token / send all)','Deploy Kontrak (Token / NFT)','Claim Faucet (RPC)','Exit'], 'Pilih menu (masukkan nomor):');
+    if (sel === 3) { console.log('Bye'); process.exit(0); }
 
-    const stats = loadStats();
-    const tkey = todayKey();
-    const todayStats = stats[tkey] || { attempts:0, success:0, failed:0 };
-    console.log(chalk.dim(` Quick stats (${tkey}): attempts=${todayStats.attempts} success=${todayStats.success} failed=${todayStats.failed}`));
-    console.log('');
-
-    const mainChoices = ['Send Address (per token / send all)', 'Deploy Kontrak (Token / NFT)', 'Exit'];
-    const idx = await askMenuNumber(mainChoices, 'Pilih menu (masukkan nomor):');
-    const sel = mainChoices[idx];
-
-    if (sel === 'Exit') {
-      console.log(chalk.dim('Bye 👋'));
-      process.exit(0);
-    } else if (sel === 'Send Address (per token / send all)') {
-      await sendModule.runSendMenu({ provider, wallet, tokens, ethers, incStat });
-      const spin = ora ? ora('Refreshing balances...').start() : null;
-      try { await loadTokenBalances(provider, wallet, tokens); if (spin) spin.succeed('Balances refreshed'); } catch (e) { if (spin) spin.fail('Refresh failed'); }
-    } else if (sel === 'Deploy Kontrak (Token / NFT)') {
-      // call deploy menu (deploy.js expected to export runDeployMenu)
-      if (typeof deployModule.runDeployMenu === 'function') {
-        await deployModule.runDeployMenu({ provider, wallet, ethers, incStat });
-        const spin = ora ? ora('Refreshing balances...').start() : null;
-        try { await loadTokenBalances(provider, wallet, tokens); if (spin) spin.succeed('Balances refreshed'); } catch (e) { if (spin) spin.fail('Refresh failed'); }
-      } else {
-        console.log(chalk.yellow('Deploy module not implemented.'));
+    try {
+      if (sel === 0) {
+        await sendModule.runSendMenu({ provider, wallet, ethers, tokens, stats });
+        await loadTokenBalances(provider, walletAddress, tokens);
+      } else if (sel === 1) {
+        await deployModule.runDeployMenu({ provider, wallet, ethers, stats });
+      } else if (sel === 2) {
+        await faucetRpc.runInteractive({ provider, wallet, ethers, stats });
       }
+    } catch (e) {
+      console.error(chalk.red('Fatal error:'), e && e.stack ? e.stack : e);
     }
 
-    await new Promise(r => setTimeout(r, 200));
+    console.log('\nReturning to main menu...\n');
   }
 }
 
-main().catch(err => {
-  // final fallback error printing (avoid chalk/oracle crashes)
-  try { console.error(chalk.red('Fatal error:'), err && err.stack ? err.stack : err); }
-  catch (e) { console.error('Fatal error:', err && err.stack ? err.stack : err); }
-  process.exit(1);
-});
+if (require.main === module) main().catch(e=>{ console.error('Fatal:', e && e.stack ? e.stack : e); process.exit(1); });
+module.exports = { main };
