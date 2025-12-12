@@ -7,7 +7,7 @@ const path = require('path');
 const inquirer = require('inquirer');
 const ethers = require('ethers');
 
-const chalk = require('chalk');
+const chalk = require('chalk').default;
 const gradient = require('gradient-string');
 const ora = require('ora');
 
