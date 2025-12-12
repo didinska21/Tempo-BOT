@@ -33,22 +33,24 @@ async function sendERC20(provider, wallet, ethers, token, to, amountHuman, waitC
 
 function printTokenSummary(tx, receipt, walletAddr, to, token, amount, ethers) {
   tlog("TX Hash:", tx.hash);
+  console.log("Explorer:", `${EXPLORER_BASE}/tx/${tx.hash}`);
   console.log(" from:", walletAddr);
   console.log(" to:", to);
   console.log(" token:", token.symbol);
   console.log(" amount:", amount);
+
   if (receipt) {
     console.log(" block:", receipt.blockNumber);
     console.log(" gasUsed:", String(receipt.gasUsed));
     try {
       const eff = receipt.effectiveGasPrice ?? 0n;
       const fee = BigInt(receipt.gasUsed) * BigInt(eff);
-      console.log(' txFee (wei):', String(fee));
-      console.log(' txFee (ETH):', ethers.formatEther(fee));
-    } catch (e) {}
+      console.log(" txFee (ETH):", ethers.formatEther(fee));
+    } catch {}
   }
-  console.log('-----------------------------------');
-}
+
+  console.log("-----------------------------------");
+  }
 
 async function runSendMenu({ provider, wallet, tokens, ethers }) {
 
