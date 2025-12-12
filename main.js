@@ -1,5 +1,5 @@
-// main.js — auto.tx by didinska (FINAL STABLE)
-// Premium UI (ASCII banner + pastel color) + Daily Stats
+// main.js — auto.tx by didinska (FINAL)
+// Premium UI: FIGLET + GRADIENT PASTEL + Daily Stats
 require('dotenv').config();
 
 const fs = require('fs');
@@ -7,8 +7,10 @@ const path = require('path');
 const readline = require('readline');
 const ethers = require('ethers');
 
-// IMPORTANT: chalk v5 CommonJS
+// chalk v5 (CommonJS)
 const chalk = require('chalk').default;
+const figlet = require('figlet');
+const gradient = require('gradient-string');
 
 // modules
 const sendModule = require('./send');
@@ -16,10 +18,13 @@ const deployModule = require('./deploy');
 const faucetModule = require('./faucet_rpc');
 const stats = require('./data/stats');
 
-// ---------- helpers ----------
+// ---------------- helpers ----------------
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
+  return new Promise(res => rl.question(q, a => {
+    rl.close();
+    res(a.trim());
+  }));
 }
 
 async function askNumbered(items, prompt = 'Pilih (nomor):') {
@@ -35,40 +40,24 @@ function today() {
   return new Date().toISOString().split('T')[0];
 }
 
-// ---------- pastel banner ----------
-function pastel(line, idx) {
-  const fns = [
-    chalk.cyan,
-    chalk.magenta,
-    chalk.blue,
-    chalk.green,
-    chalk.yellow,
-    chalk.white
-  ];
-  return fns[idx % fns.length](line);
-}
-
+// ---------------- banner ----------------
 function showBanner() {
-  const banner = [
-    '    _            _        _   _____    __',
-    '   / \\   _ __ __| | ___  / | |_   _|__|  \\',
-    '  / _ \\ | \'__/ _` |/ _ \\ | |   | |/ _ \\ |)',
-    ' / ___ \\| | | (_| |  __/ | |   | |  __/  /',
-    '/_/   \\_\\_|  \\__,_|\\___| |_|   |_|\\___|_/',
-    '',
-    '            auto.tx by didinska',
-    '     Send / Deploy / Faucet (RPC)'
-  ];
-
   console.clear();
-  banner.forEach((l, i) => console.log(pastel(l, i)));
-  console.log('');
+
+  const banner = figlet.textSync('S E I S M I C', {
+    font: 'ANSI Shadow',
+    horizontalLayout: 'default',
+    verticalLayout: 'default'
+  });
+
+  console.log(gradient.pastel.multiline(banner));
+  console.log(chalk.gray.bold('owner : t.me/didinska\n'));
 }
 
-// ---------- token loader ----------
+// ---------------- tokens ----------------
 function parseTokens() {
-  const raw = process.env.TOKENS || '';
-  return raw.split(',')
+  return (process.env.TOKENS || '')
+    .split(',')
     .map(s => s.trim())
     .filter(Boolean)
     .map(s => {
@@ -80,6 +69,7 @@ function parseTokens() {
 async function loadBalances(provider, walletAddr, tokens) {
   const abiPath = path.join(process.cwd(), 'build', 'SimpleERC20.abi.json');
   if (!fs.existsSync(abiPath)) return;
+
   const abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
 
   for (const t of tokens) {
@@ -96,12 +86,12 @@ async function loadBalances(provider, walletAddr, tokens) {
   }
 }
 
-// ---------- MAIN ----------
+// ---------------- MAIN ----------------
 async function main() {
   showBanner();
 
   if (!process.env.RPC_URL) {
-    console.log(chalk.red('RPC_URL belum di set di .env'));
+    console.log(chalk.red('RPC_URL belum diset di .env'));
     process.exit(1);
   }
 
@@ -128,6 +118,7 @@ async function main() {
   });
 
   console.log('-------------------------------------------');
+
   const s = stats.get();
   console.log(
     chalk.magenta(
@@ -161,10 +152,8 @@ async function main() {
       console.error(chalk.red('Fatal error:'), e?.message || e);
     }
 
-    // reload balances + stats
     await loadBalances(provider, walletAddr, tokens);
     const ns = stats.get();
-    console.log('');
     console.log(
       chalk.magenta(
         ` Updated stats (${today()}): attempts=${ns.attempts} success=${ns.success} failed=${ns.failed}`
@@ -173,7 +162,7 @@ async function main() {
   }
 }
 
-// ---------- run ----------
+// ---------------- run ----------------
 if (require.main === module) {
   main().catch(e => {
     console.error(chalk.red('Fatal:'), e?.stack || e);
