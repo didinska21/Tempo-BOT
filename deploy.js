@@ -140,6 +140,10 @@ async function runDeployMenu({ provider, wallet, ethers }) {
       try {
         const { receipt, txHash, contractAddress } = await deployWithConstructor(provider, wallet, bytecode, abi, [name, symbol, initialSupply], ethers);
         tlog('DONE:', txHash, 'contract:', contractAddress);
+console.log("Explorer TX:", `${EXPLORER_BASE}/tx/${txHash}`);
+if (contractAddress) {
+  console.log("Explorer Contract:", `${EXPLORER_BASE}/address/${contractAddress}`);
+}
       } catch (err) {
         tlog('Error deploy token:', err && err.message ? err.message : err);
       }
