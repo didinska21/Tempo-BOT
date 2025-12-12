@@ -1,14 +1,8 @@
-// send.js (updated)
-// - No native
-// - Per-token: choose Manual or Random destination
-// - Ask how many TX (0 = until balance depleted)
-// - Wait for confirmation option
-// - Prints explorer link for each tx
-// Requires: ethers v6, inquirer, dotenv (main.js loads dotenv)
-// runSendMenu({ provider, wallet, tokens, ethers })
+// send.js — concise logs + spinner + retry (max 3) + summary
+// Compatible with ethers v6 and previous project structure.
+// No external deps beyond inquirer and ethers.
 
 const inquirer = require('inquirer');
-
 const prompt = (inquirer.createPromptModule && inquirer.createPromptModule()) || inquirer.prompt;
 
 const ERC20_ABI = [
@@ -17,250 +11,260 @@ const ERC20_ABI = [
   "function transfer(address to, uint amount) returns (bool)"
 ];
 
-function tlog(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
+// simple ANSI colors (no dependency)
+const COL = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  cyan: "\x1b[36m"
+};
 
-const EXPLORER_BASE = process.env.EXPLORER_BASE || '';
-
-async function getTokenContract(provider, tokenAddr, walletOrProvider) {
-  return new (require('ethers')).Contract(tokenAddr, ERC20_ABI, walletOrProvider);
+function now() {
+  return new Date().toISOString();
 }
 
-async function getTokenBalance(provider, tokenAddr, address, ethers) {
-  try {
-    const c = await getTokenContract(provider, tokenAddr, provider);
-    const dec = await c.decimals();
-    const bal = await c.balanceOf(address);
-    return { bal, dec };
-  } catch (e) {
-    return { bal: null, dec: null };
-  }
+function short(hash) {
+  if (!hash) return '';
+  return hash.length > 18 ? hash.slice(0,10) + '...' + hash.slice(-6) : hash;
 }
 
-function formatUnitsSafe(ethers, value, decimals) {
-  try { return ethers.formatUnits(value, decimals); } catch (e) { return String(value); }
+// spinner helper
+function startSpinner(text) {
+  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  let i = 0;
+  const id = setInterval(() => {
+    process.stdout.write(`\r${frames[i % frames.length]} ${text} `);
+    i++;
+  }, 80);
+  return id;
+}
+function stopSpinner(id, clearLine = true) {
+  if (id) clearInterval(id);
+  if (clearLine) process.stdout.write('\r\x1b[K');
 }
 
-function randomAddress(ethers) {
-  return ethers.Wallet.createRandom().address;
-}
-
-function shortHash(h) {
-  if (!h) return '';
-  if (h.length > 20) return h.slice(0,10) + '...' + h.slice(-6);
-  return h;
-}
-
-function printTxSummaryWithExplorer(txResp, receipt, from, to, tokenSymbol, amountHuman, ethers) {
-  tlog('TX Hash:', txResp.hash);
-  if (EXPLORER_BASE) console.log('Explorer:', `${EXPLORER_BASE}/tx/${txResp.hash}`);
-  console.log(' from:', from);
-  console.log(' to:', to);
-  console.log(' token:', tokenSymbol);
-  console.log(' amount:', amountHuman);
+// print concise success/failed line
+function printSuccess(txHash, explorerBase, tokenSymbol, amount, to, receipt) {
+  const ts = now();
+  const h = short(txHash);
+  const link = explorerBase ? `${explorerBase}/tx/${txHash}` : '';
+  console.log(`${COL.green}[${ts}] ✅ CONFIRMED ${h}${COL.reset}` + (link ? ` ${COL.cyan}${link}${COL.reset}` : ''));
+  console.log(`  ${COL.dim}token:${COL.reset} ${tokenSymbol}  ${COL.dim}amount:${COL.reset} ${amount}  ${COL.dim}to:${COL.reset} ${to}`);
   if (receipt) {
-    console.log(' block:', receipt.blockNumber);
-    console.log(' status:', receipt.status);
-    console.log(' gasUsed:', String(receipt.gasUsed));
-    try {
-      const eff = receipt.effectiveGasPrice ?? 0n;
-      const fee = BigInt(receipt.gasUsed) * BigInt(eff);
-      console.log(' txFee (wei):', String(fee));
-      console.log(' txFee (ETH):', ethers.formatEther(fee));
-    } catch {}
+    console.log(`  ${COL.dim}block:${COL.reset} ${receipt.blockNumber}  ${COL.dim}gasUsed:${COL.reset} ${String(receipt.gasUsed)}`);
   }
-  console.log('-----------------------------------');
+}
+function printSent(txHash, explorerBase, tokenSymbol, amount, to) {
+  const ts = now();
+  const h = short(txHash);
+  const link = explorerBase ? `${explorerBase}/tx/${txHash}` : '';
+  console.log(`${COL.yellow}[${ts}] ➜ SENT ${h}${COL.reset}` + (link ? ` ${COL.cyan}${link}${COL.reset}` : ''));
+  console.log(`  ${COL.dim}token:${COL.reset} ${tokenSymbol}  ${COL.dim}amount:${COL.reset} ${amount}  ${COL.dim}to:${COL.reset} ${to}`);
+}
+function printFailed(reason, tokenSymbol, amount, to, attempt) {
+  const ts = now();
+  console.log(`${COL.red}[${ts}] ❌ FAILED (${attempt}) ${COL.reset}`);
+  console.log(`  ${COL.dim}${reason}${COL.reset}`);
+  console.log(`  ${COL.dim}token:${COL.reset} ${tokenSymbol}  ${COL.dim}amount:${COL.reset} ${amount}  ${COL.dim}to:${COL.reset} ${to}`);
 }
 
-async function sendERC20Once(provider, wallet, ethers, token, to, amountHuman, waitConfirm) {
+// core: send once with retries
+async function sendERC20WithRetries(provider, wallet, ethers, token, to, amountHuman, waitConfirm, maxRetries=3) {
   const contract = new ethers.Contract(token.address, ERC20_ABI, wallet);
   const decimals = await contract.decimals();
-  const amount = ethers.parseUnits(String(amountHuman), decimals);
+  const amountUnits = ethers.parseUnits(String(amountHuman), decimals);
 
-  tlog(`Sending ${amountHuman} ${token.symbol} -> ${to} (decimals ${decimals}) ...`);
-  const tx = await contract.transfer(to, amount);
-  tlog('Sent. hash:', tx.hash);
-  let receipt = null;
-  if (waitConfirm) {
-    tlog('Waiting for 1 confirmation...');
-    receipt = await tx.wait(1);
-    tlog('Confirmed in block', receipt.blockNumber);
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    attempt++;
+    try {
+      // send transaction
+      const tx = await contract.transfer(to, amountUnits);
+      // printed as SENT concise
+      printSent(tx.hash, process.env.EXPLORER_BASE || '', token.symbol, amountHuman, to);
+
+      // wait for 1 confirm if asked, using spinner
+      let receipt = null;
+      if (waitConfirm) {
+        const spinnerId = startSpinner(`waiting confirm ${short(tx.hash)} (attempt ${attempt})`);
+        try {
+          receipt = await tx.wait(1);
+        } finally {
+          stopSpinner(spinnerId);
+        }
+      }
+      // success
+      return { success: true, txHash: tx.hash, receipt };
+    } catch (err) {
+      // capture error message
+      const msg = (err && err.message) ? err.message : String(err);
+      // if last attempt, return failure
+      if (attempt >= maxRetries) {
+        printFailed(msg, token.symbol, amountHuman, to, attempt);
+        return { success: false, error: msg };
+      } else {
+        // print retry warn and loop
+        console.log(`${COL.yellow}[${now()}] ⚠ retrying (${attempt}/${maxRetries}) due to: ${msg}${COL.reset}`);
+        // small backoff
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+    }
   }
-  return { tx, receipt };
+  // fallback
+  return { success: false, error: 'unknown' };
 }
 
+// helper to get token balance (raw and human)
+async function getTokenBalance(provider, token, address, ethers) {
+  try {
+    const c = new ethers.Contract(token.address, ERC20_ABI, provider);
+    const dec = await c.decimals();
+    const bal = await c.balanceOf(address);
+    return { bal, dec, human: ethers.formatUnits(bal, dec) };
+  } catch (e) {
+    return { bal: null, dec: null, human: 'err' };
+  }
+}
+
+// main menu runner (exports)
 async function runSendMenu({ provider, wallet, tokens, ethers }) {
+  const explorerBase = process.env.EXPLORER_BASE || '';
+
   while (true) {
-    // Build menu choices showing balanceHuman if present
-    const choices = tokens.map((t,i) => ({
+    // menu choices
+    const choices = tokens.map((t,i)=>({
       name: `Send Token: ${t.symbol}` + (t.balanceHuman ? ` — balance: ${t.balanceHuman}` : ''),
       value: i
     }));
     choices.push({ name: 'Send Semua Token', value: 'send_all' });
     choices.push({ name: 'Back to Main Menu', value: 'back' });
 
-    const { menu } = await prompt([{
-      type: 'list',
-      name: 'menu',
-      message: 'Send Address - pilih:',
-      choices
-    }]);
-
+    const { menu } = await prompt([{ type:'list', name:'menu', message:'Send Address - pilih:', choices }]);
     if (menu === 'back') return;
 
+    // target selection (for single token or send_all)
+    let targetMode = null;
     if (menu === 'send_all') {
-      // send same amount per token to chosen dest
-      const { destType } = await prompt([{
-        type: 'list',
-        name: 'destType',
-        message: 'Pilih tujuan untuk Send Semua Token:',
-        choices: [
-          { name: 'Send to Random Address', value: 'random' },
-          { name: 'Send to Manual Address', value: 'manual' },
-          { name: 'Back', value: 'back' }
+      const ans = await prompt([{
+        type:'list', name:'destType', message:'Pilih tujuan untuk Send Semua Token:', choices:[
+          { name:'Send to Random Address', value:'random' },
+          { name:'Send to Manual Address', value:'manual' },
+          { name:'Back', value:'back' }
         ]
       }]);
-      if (destType === 'back') continue;
-
-      let to;
-      if (destType === 'random') to = randomAddress(ethers);
-      else {
-        const ans = await prompt([{
-          type: 'input', name: 'manualAddress', message: 'Masukkan address tujuan:',
-          validate: v => ethers.isAddress(v) ? true : 'Address tidak valid'
-        }]);
-        to = ans.manualAddress;
-      }
-
-      const { amount } = await prompt([{
-        type: 'input', name: 'amount', message: 'Jumlah per token yang akan dikirim (per token):', default: '1',
-        validate: v => !isNaN(Number(v)) ? true : 'Masukkan angka valid'
+      if (ans.destType === 'back') continue;
+      targetMode = ans.destType;
+    } else {
+      const ans = await prompt([{
+        type:'list', name:'destType', message:`Tujuan untuk ${tokens[menu].symbol}:`, choices:[
+          { name:'Send to Random Address', value:'random' },
+          { name:'Send to Manual Address', value:'manual' },
+          { name:'Back', value:'back' }
+        ]
       }]);
+      if (ans.destType === 'back') continue;
+      targetMode = ans.destType;
+    }
 
-      const { sendCount } = await prompt([{
-        type: 'input', name: 'sendCount', message: 'Jumlah TX yang akan dikirim per token (0 = sampai balance habis):', default: '1',
-        validate: v => { const n = Number(v); return (!isNaN(n) && n >= 0) ? true : 'Masukkan angka >= 0'; }
-      }]);
+    let manualTo = null;
+    if (targetMode === 'manual') {
+      const ans = await prompt([{ type:'input', name:'manualAddress', message:'Masukkan address tujuan:', validate: v => ethers.isAddress(v) ? true : 'Address tidak valid' }]);
+      manualTo = ans.manualAddress;
+    }
 
-      const countNum = Number(sendCount);
-      const waitConfirmAns = await prompt([{ type:'confirm', name:'waitConfirm', message:'Tunggu 1 konfirmasi tiap tx?', default: String(process.env.WAIT_CONFIRM||'true')==='true' }]);
-      const waitConfirm = waitConfirmAns.waitConfirm;
+    // common prompts: amount per tx, sendCount, waitConfirm
+    const { amount } = await prompt([{ type:'input', name:'amount', message:'Jumlah yang akan dikirim per tx (per token):', default:'1', validate: v => !isNaN(Number(v)) ? true : 'Masukkan angka valid' }]);
+    const { sendCount } = await prompt([{ type:'input', name:'sendCount', message:'Jumlah TX yang akan dikirim (0 = sampai balance habis):', default:'1', validate: v=> { const n=Number(v); return (!isNaN(n) && n>=0) ? true : 'Masukkan angka >=0'; } }]);
+    const { waitConfirm } = await prompt([{ type:'confirm', name:'waitConfirm', message:'Tunggu 1 konfirmasi tiap tx?', default: String(process.env.WAIT_CONFIRM||'true')==='true' }]);
+    const countNum = Number(sendCount);
 
-      // loop tokens and send per token
+    // counters
+    let totalAttempts = 0;
+    let totalSuccess = 0;
+    let totalFailed = 0;
+
+    // send_all flow
+    if (menu === 'send_all') {
+      // iterate tokens
       for (const token of tokens) {
-        let sent = 0;
-        while (countNum === 0 ? true : sent < countNum) {
+        // reset per-token counters
+        let sentForToken = 0;
+        while (countNum === 0 ? true : sentForToken < countNum) {
           // check balance
-          const { bal, dec } = await getTokenBalance(provider, token.address, await wallet.getAddress(), ethers);
-          if (bal == null || dec == null) {
-            tlog(`Gagal ambil balance ${token.symbol}, skip.`);
-            break;
-          }
-          // amount in smallest unit
+          const { bal, dec, human } = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+          if (bal == null || dec == null) { tlog(`Failed reading balance for ${token.symbol}, skipping.`); break; }
           const unitAmount = ethers.parseUnits(String(amount), dec);
           if (BigInt(bal) < BigInt(unitAmount)) {
-            tlog(`Saldo ${token.symbol} tidak cukup (remaining ${formatUnitsSafe(ethers, bal, dec)}), stop sending this token.`);
+            tlog(`${COL.yellow}[${now()}] Insufficient ${token.symbol} balance (${human}), skip token.${COL.reset}`);
             break;
           }
 
-          // destination: if random chosen earlier -> same to every iteration? we'll regenerate per tx for "random"
-          let dest = to;
-          if (destType === 'random') dest = randomAddress(ethers);
+          // destination
+          const to = (targetMode === 'random') ? ethers.Wallet.createRandom().address : manualTo;
 
-          try {
-            const { tx, receipt } = await sendERC20Once(provider, wallet, ethers, token, dest, amount, waitConfirm);
-            printTxSummaryWithExplorer(tx, receipt, await wallet.getAddress(), dest, token.symbol, amount, ethers);
-            sent++;
-          } catch (err) {
-            tlog(`Error kirim ${token.symbol}:`, err && err.message ? err.message : err);
-            // If tx fails, break this token loop to avoid infinite retry
-            break;
+          // send with retries
+          totalAttempts++;
+          const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3);
+          if (res.success) {
+            totalSuccess++;
+            sentForToken++;
+            // print confirmed if receipt exists, otherwise just show sent
+            if (res.receipt) printSuccess(res.txHash, explorerBase, token.symbol, amount, to, res.receipt);
+            else console.log(`${COL.green}[${now()}] ✅ SENT ${short(res.txHash)}${COL.reset}`);
+          } else {
+            totalFailed++;
           }
 
-          // interval between tx
+          // break if count specified and reached
+          if (!(countNum === 0 ? true : sentForToken < countNum)) break;
+          // interval
           const interval = Number(process.env.INTERVAL_MS || 1500);
           await new Promise(r => setTimeout(r, interval));
         } // end while per token
       } // end for tokens
 
-      tlog('Send Semua selesai.');
-      continue;
-    } // end send_all
+    } else {
+      // single token flow
+      const token = tokens[menu];
+      let sentForToken = 0;
+      while (countNum === 0 ? true : sentForToken < countNum) {
+        // check balance
+        const { bal, dec, human } = await getTokenBalance(provider, token, await wallet.getAddress(), ethers);
+        if (bal == null || dec == null) { tlog(`Failed reading balance for ${token.symbol}, abort.`); break; }
+        const unitAmount = ethers.parseUnits(String(amount), dec);
+        if (BigInt(bal) < BigInt(unitAmount)) {
+          tlog(`${COL.yellow}[${now()}] Insufficient ${token.symbol} balance (${human}), stop.${COL.reset}`);
+          break;
+        }
 
-    // Single token send flow
-    const token = tokens[menu];
+        const to = (targetMode === 'random') ? ethers.Wallet.createRandom().address : manualTo;
+        totalAttempts++;
+        const res = await sendERC20WithRetries(provider, wallet, ethers, token, to, amount, waitConfirm, 3);
+        if (res.success) {
+          totalSuccess++;
+          sentForToken++;
+          if (res.receipt) printSuccess(res.txHash, explorerBase, token.symbol, amount, to, res.receipt);
+          else console.log(`${COL.green}[${now()}] ✅ SENT ${short(res.txHash)}${COL.reset}`);
+        } else {
+          totalFailed++;
+        }
 
-    // destination submenu
-    const { destType } = await prompt([{
-      type: 'list',
-      name: 'destType',
-      message: `Tujuan untuk ${token.symbol}:`,
-      choices: [
-        { name: 'Send to Random Address', value: 'random' },
-        { name: 'Send to Manual Address', value: 'manual' },
-        { name: 'Back', value: 'back' }
-      ]
-    }]);
-
-    if (destType === 'back') continue;
-
-    let to;
-    if (destType === 'random') to = randomAddress(ethers);
-    else {
-      const ans = await prompt([{
-        type: 'input',
-        name: 'manualAddress',
-        message: 'Masukkan address tujuan:',
-        validate: v => ethers.isAddress(v) ? true : 'Address tidak valid'
-      }]);
-      to = ans.manualAddress;
+        if (!(countNum === 0 ? true : sentForToken < countNum)) break;
+        const interval = Number(process.env.INTERVAL_MS || 1500);
+        await new Promise(r => setTimeout(r, interval));
+      } // end while
     }
 
-    const { amount } = await prompt([{
-      type: 'input', name: 'amount', message: `Jumlah ${token.symbol} yang akan dikirim per tx:`, default: '1',
-      validate: v => !isNaN(Number(v)) ? true : 'Masukkan angka valid'
-    }]);
+    // summary for this session
+    console.log('\n' + COL.bright + '=== SESSION SUMMARY ===' + COL.reset);
+    console.log(`Total attempts: ${totalAttempts}`);
+    console.log(`${COL.green}Succeeded: ${totalSuccess}${COL.reset}  ${COL.red}Failed: ${totalFailed}${COL.reset}`);
+    console.log('========================\n');
 
-    const { sendCount } = await prompt([{
-      type: 'input', name: 'sendCount', message: 'Jumlah TX yang akan dikirim (0 = sampai balance habis):', default: '1',
-      validate: v => { const n = Number(v); return (!isNaN(n) && n >= 0) ? true : 'Masukkan angka >= 0'; }
-    }]);
-
-    const countNum = Number(sendCount);
-    const { waitConfirm } = await prompt([{ type:'confirm', name:'waitConfirm', message:'Tunggu 1 konfirmasi tiap tx?', default: String(process.env.WAIT_CONFIRM||'true')==='true' }]);
-
-    let sent = 0;
-    while (countNum === 0 ? true : sent < countNum) {
-      // check balance
-      const { bal, dec } = await getTokenBalance(provider, token.address, await wallet.getAddress(), ethers);
-      if (bal == null || dec == null) {
-        tlog('Gagal ambil balance token, abort.');
-        break;
-      }
-      const unitAmount = ethers.parseUnits(String(amount), dec);
-      if (BigInt(bal) < BigInt(unitAmount)) {
-        tlog(`Saldo ${token.symbol} tidak cukup (remaining ${formatUnitsSafe(ethers, bal, dec)}), stop.`);
-        break;
-      }
-
-      // if destType random, generate new address each iteration
-      if (destType === 'random') to = randomAddress(ethers);
-
-      try {
-        const { tx, receipt } = await sendERC20Once(provider, wallet, ethers, token, to, amount, waitConfirm);
-        printTxSummaryWithExplorer(tx, receipt, await wallet.getAddress(), to, token.symbol, amount, ethers);
-        sent++;
-      } catch (err) {
-        tlog('Error saat mengirim:', err && err.message ? err.message : err);
-        break;
-      }
-
-      if (!(countNum === 0 ? true : sent < countNum)) break;
-
-      const interval = Number(process.env.INTERVAL_MS || 1500);
-      await new Promise(r => setTimeout(r, interval));
-    } // end while
-
-    tlog(`Selesai mengirim ${token.symbol}. total sent: ${sent}`);
   } // end main while
 }
 
