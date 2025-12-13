@@ -2,12 +2,13 @@
   "name": "auto-tx-tempo",
   "version": "1.0.0",
   "description": "auto.tx by didinska - Send / Deploy / Faucet (RPC) CLI (ethers v6)",
+  "type": "module",
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
     "deploy": "node deploy.js",
     "send": "node send.js",
-    "faucet": "node faucet_rpc.js"
+    "faucet": "node faucet.js"
   },
   "author": "didinska",
   "license": "MIT",
