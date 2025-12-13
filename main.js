@@ -1,7 +1,9 @@
-// main.js - unified CLI (v2: re-render header & balances)
+// main.js - SUPER PREMIUM CLI UI (BOX + COLOR + SPINNER)
 require('dotenv').config();
 const ethers = require('ethers');
 const readline = require('readline');
+const chalk = require('chalk');
+const ora = require('ora');
 
 const sendModule = require('./send');
 const deployModule = require('./deploy');
@@ -13,13 +15,15 @@ function rlQuestion(q){
   return new Promise(res => rl.question(q, a => { rl.close(); res(a); }));
 }
 
-async function askNumbered(items, prompt='Pilih (masukkan nomor):'){
-  items.forEach((it,i)=>console.log(`${i+1}. ${it}`));
+async function askNumbered(items, prompt='Pilih (nomor):'){
+  items.forEach((it,i)=>{
+    console.log(chalk.cyan(`  ${i+1}. ${it}`));
+  });
   while(true){
-    const a = (await rlQuestion(prompt+' ')).trim();
+    const a = (await rlQuestion(chalk.yellow(`\n${prompt} `))).trim();
     const n = Number(a);
     if(!Number.isNaN(n) && n>=1 && n<=items.length) return n-1;
-    console.log('Masukkan nomor valid.');
+    console.log(chalk.red('❌ Masukkan nomor valid.'));
   }
 }
 
@@ -56,33 +60,75 @@ async function loadTokenBalances(provider, walletAddress, tokens) {
   }
 }
 
-// ================= UI render =================
+// ================= UI BOX =================
+function boxLine(text = '', width = 43) {
+  const pad = width - text.length;
+  return chalk.cyan('│ ') + text + ' '.repeat(Math.max(0, pad)) + chalk.cyan(' │');
+}
+
+function renderBoxHeader(title) {
+  console.log(chalk.cyan('┌' + '─'.repeat(45) + '┐'));
+  console.log(
+    boxLine(
+      chalk.magenta.bold(title),
+      43
+    )
+  );
+  console.log(chalk.cyan('├' + '─'.repeat(45) + '┤'));
+}
+
+// ================= RENDER MAIN =================
 async function renderMainHeader({ provider, walletAddress, tokens }) {
   console.clear();
-  console.log('===========================================');
-  console.log('   auto.tx by didinska');
-  console.log('   Send / Deploy / Faucet (RPC) CLI');
-  console.log('===========================================');
 
-  console.log('Wallet   :', walletAddress);
+  renderBoxHeader('AUTO.TX by didinska');
+
+  console.log(
+    boxLine(
+      chalk.yellow('Wallet : ') + chalk.white(walletAddress),
+      43
+    )
+  );
+
   if (process.env.EXPLORER_BASE) {
-    console.log('Explorer :', process.env.EXPLORER_BASE);
+    console.log(
+      boxLine(
+        chalk.yellow('Explorer: ') + chalk.white(process.env.EXPLORER_BASE),
+        43
+      )
+    );
   }
+
+  console.log(chalk.cyan('├' + '─'.repeat(45) + '┤'));
+
+  const spinner = ora({
+    text: 'Loading token balances...',
+    spinner: 'dots',
+    color: 'cyan'
+  }).start();
 
   await loadTokenBalances(provider, walletAddress, tokens);
 
-  console.log('Loaded tokens:');
-  tokens.forEach((t,i) => {
-    console.log(` ${i+1}. ${t.symbol}  balance: ${t.balanceHuman}`);
+  spinner.succeed('Balances loaded');
+
+  tokens.forEach((t,i)=>{
+    console.log(
+      boxLine(
+        chalk.green(`${i+1}. ${t.symbol}`) +
+        chalk.gray(' | ') +
+        chalk.green.bold(t.balanceHuman),
+        43
+      )
+    );
   });
 
-  console.log('-------------------------------------------');
+  console.log(chalk.cyan('└' + '─'.repeat(45) + '┘'));
 }
 
 // ================= MAIN =================
 async function main() {
   if (!process.env.RPC_URL) {
-    console.log('RPC_URL missing in .env');
+    console.log(chalk.red('RPC_URL missing in .env'));
     process.exit(1);
   }
 
@@ -94,17 +140,10 @@ async function main() {
   const walletAddress = wallet ? await wallet.getAddress() : 'NoKey';
   const tokens = parseTokensEnv();
 
-  // runtime stats
-  const quickStats = { attempts: 0, success: 0, failed: 0 };
-
   while (true) {
     await renderMainHeader({ provider, walletAddress, tokens });
 
-    console.log('1. Send Address (per token / send all)');
-    console.log('2. Deploy Kontrak (Token / NFT)');
-    console.log('3. Claim Faucet (RPC)');
-    console.log('4. Exit');
-
+    console.log('\n');
     const sel = await askNumbered(
       [
         'Send Address (per token / send all)',
@@ -112,22 +151,21 @@ async function main() {
         'Claim Faucet (RPC)',
         'Exit'
       ],
-      'Pilih menu:'
+      'Pilih menu'
     );
 
+    const spinner = ora({ text: 'Processing...', spinner: 'line', color: 'magenta' }).start();
+
     if (sel === 3) {
-      console.log('Bye.');
+      spinner.stop();
+      console.log(chalk.green('\n👋 Bye.\n'));
       process.exit(0);
     }
 
+    spinner.stop();
+
     if (sel === 0) {
-      await sendModule.runSendMenu({
-        provider,
-        wallet,
-        ethers,
-        tokens,
-        quickStats
-      });
+      await sendModule.runSendMenu({ provider, wallet, ethers, tokens });
     }
 
     if (sel === 1) {
@@ -138,13 +176,15 @@ async function main() {
       await faucet.runInteractive();
     }
 
-    // setelah action → loop ulang → header + balance tampil lagi
+    const backSpinner = ora({ text: 'Returning to main menu...', spinner: 'dots', color: 'cyan' }).start();
+    await new Promise(r => setTimeout(r, 800));
+    backSpinner.stop();
   }
 }
 
 if (require.main === module) {
   main().catch(e => {
-    console.error('Fatal:', e && e.stack ? e.stack : e);
+    console.error(chalk.red('Fatal:'), e && e.stack ? e.stack : e);
     process.exit(1);
   });
 }
