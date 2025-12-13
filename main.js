@@ -1,10 +1,10 @@
-// main.js (ESM - STABLE FINAL)
+// main.js (ESM - STABLE v3 FIXED)
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
-import { JsonRpcProvider, Wallet, Contract } from 'ethers';
+import { JsonRpcProvider, Wallet, Contract, formatUnits } from 'ethers';
 
 import { runSendMenu } from './send.js';
 import { runDeployMenu } from './deploy.js';
@@ -48,13 +48,13 @@ async function loadBalances(provider, walletAddress, tokens) {
       const c = new Contract(t.address, abi, provider);
       const dec = await c.decimals();
       const bal = await c.balanceOf(walletAddress);
-      t.balanceHuman = Number(bal) / 10 ** dec;
-    } catch {
+      t.balanceHuman = formatUnits(bal, dec);
+    } catch (e) {
       t.balanceHuman = 'err';
     }
   }
 
-  spinner.stop();
+  spinner.succeed('Balances loaded');
 }
 
 async function askMenu() {
@@ -94,9 +94,13 @@ async function main() {
 
     console.log(chalk.gray('\nLoaded tokens:'));
     tokens.forEach((t, i) => {
+      const bal =
+        t.balanceHuman === 'err'
+          ? chalk.red('err')
+          : chalk.green(t.balanceHuman);
       console.log(
         chalk.gray(` ${i + 1}. ${t.symbol}`),
-        chalk.white(` balance: ${t.balanceHuman}`)
+        chalk.white(' balance:'), bal
       );
     });
 
