@@ -1,4 +1,4 @@
-// faucet.js (ESM - RPC only, formatted output)
+// faucet.js (ESM - RPC only, formatted output + delay)
 import 'dotenv/config';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -13,6 +13,9 @@ const TOKENS = [
   { symbol: 'ThetaUSD', amount: '1.000.000' }
 ];
 
+const CLAIM_DELAY_MS = 15_000;   // 15 detik antar claim
+const FINISH_DELAY_MS = 30_000; // 30 detik sebelum balik ke main menu
+
 // ===== readline helper =====
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -21,6 +24,8 @@ function rlQuestion(q) {
     res(a);
   }));
 }
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export async function runInteractive() {
   const provider = new JsonRpcProvider(process.env.RPC_URL);
@@ -51,7 +56,7 @@ export async function runInteractive() {
 
     try {
       const txHashes = await provider.send('tempo_fundAddress', [address]);
-      spin.succeed(`Berhasil claim faucet`);
+      spin.succeed('Berhasil claim faucet');
 
       console.log(chalk.cyan.bold(`\n${i}.`));
       console.log(chalk.green('berhasil claim faucet'));
@@ -77,11 +82,20 @@ export async function runInteractive() {
       console.log(chalk.red(e.message || e));
     }
 
-    console.log(); // spasi antar batch
-    await new Promise(r => setTimeout(r, 1200));
+    // jeda antar claim
+    if (i < total) {
+      console.log(
+        chalk.gray(`\nMenunggu ${CLAIM_DELAY_MS / 1000} detik sebelum claim berikutnya...\n`)
+      );
+      await sleep(CLAIM_DELAY_MS);
+    }
   }
 
   console.log(chalk.gray('────────────────────────'));
-  console.log(chalk.green('Faucet selesai.'));
-  await new Promise(r => setTimeout(r, 1200));
-}
+  console.log(chalk.green('Semua claim faucet selesai.'));
+  console.log(
+    chalk.gray(`Menunggu ${FINISH_DELAY_MS / 1000} detik sebelum kembali ke main menu...`)
+  );
+
+  await sleep(FINISH_DELAY_MS);
+              }
