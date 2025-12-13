@@ -1,115 +1,85 @@
-// deploy.js - deploy SimpleERC20 / SimpleERC721 (ethers v6)
+// deploy.js - FINAL PREMIUM
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const ethers = require('ethers');
 const readline = require('readline');
+const chalk = require('chalk').default;
+const ora = require('ora');
 
 const BUILD_DIR = path.join(process.cwd(), 'build');
-const DEPLOYED_FILE = path.join(process.cwd(), 'deployed_contracts.json');
 
-function rlQuestion(q){ const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); return new Promise(res => rl.question(q, a => { rl.close(); res(a); })); }
-async function askNumbered(items, prompt='Pilih (nomor):'){ items.forEach((it,i)=>console.log(`${i+1}. ${it}`)); while(true){ const a = (await rlQuestion(prompt+' ')).trim(); const n=Number(a); if(!Number.isNaN(n) && n>=1 && n<=items.length) return n-1; console.log('Masukkan nomor valid.'); } }
-async function askInput(msg, def=''){ const a = (await rlQuestion(`${msg}${def? ' ('+def+')':''}: `)).trim(); return a === '' ? def : a; }
-
-function loadBuild(name) {
-  const abiPath = path.join(BUILD_DIR, `${name}.abi.json`);
-  const bytePath = path.join(BUILD_DIR, `${name}.bytecode.txt`);
-  if (!fs.existsSync(abiPath) || !fs.existsSync(bytePath)) return null;
-  return { abi: JSON.parse(fs.readFileSync(abiPath,'utf8')), bytecode: fs.readFileSync(bytePath,'utf8').trim() };
+function rlQuestion(q){
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
 }
-function saveDeployed(obj) {
-  let all = {};
-  try { if (fs.existsSync(DEPLOYED_FILE)) all = JSON.parse(fs.readFileSync(DEPLOYED_FILE,'utf8')||'{}'); } catch(e){}
-  const key = new Date().toISOString();
-  all[key] = obj;
-  fs.writeFileSync(DEPLOYED_FILE, JSON.stringify(all, null, 2), 'utf8');
-}
-
-async function deployContract(provider, wallet, abi, bytecode, constructorArgs = []) {
-  const factory = new ethers.ContractFactory(abi, bytecode, wallet);
-  const contract = await factory.deploy(...constructorArgs);
-  await contract.waitForDeployment();
-  let address = contract.target || contract.address || (await contract.getAddress && await contract.getAddress());
-  let deployTx = null;
-  try { deployTx = contract.deploymentTransaction ? contract.deploymentTransaction() : (contract.deployTransaction || null); } catch(e){}
-  return { contract, address, deployTx };
-}
-
-async function runDeployMenu({ provider, wallet, ethers:ethersPassed } = {}) {
-  if (!process.env.RPC_URL) { console.log('RPC_URL missing in .env'); return; }
-  const providerLocal = provider || new ethers.JsonRpcProvider(process.env.RPC_URL);
-  const walletLocal = wallet || (process.env.PRIVATE_KEY ? new ethers.Wallet(process.env.PRIVATE_KEY, providerLocal) : null);
-
-  while(true) {
-    console.log('\nDeploy Kontrak - pilih:');
-    const idx = await askNumbered(['Deploy Token (ERC20)', 'Deploy NFT (ERC721)', 'Back']);
-    if (idx === 2) return;
-
-    if (idx === 0) {
-      const build = loadBuild('SimpleERC20');
-      if (!build) { console.log('Artifact SimpleERC20 not found in build/. Run compile_all.js'); continue; }
-      console.log('Deploy Token (ERC20)');
-      const mode = await askNumbered(['Deploy Manual (input name/symbol)','Deploy Auto (random name)', 'Back'],'Pilih mode:');
-      if (mode === 2) continue;
-      let name = 'MyToken', symbol = 'MTK';
-      if (mode === 0) {
-        name = await askInput('Token name', name);
-        symbol = await askInput('Token symbol', symbol);
-      } else {
-        const r = Math.random().toString(36).slice(2,8).toUpperCase();
-        name = `Token${r}`; symbol = `T${r.slice(0,3)}`;
-      }
-      const decimals = Number(await askInput('Decimals (default 18)', '18')) || 18;
-      const supplyHuman = BigInt(await askInput('Total supply (human units)', '1000000000')) || 1000000000n;
-      const supplyUnits = supplyHuman * (10n ** BigInt(decimals));
-      console.log('Deploying', name, symbol, 'supply', supplyHuman.toString());
-      try {
-        const { contract, address, deployTx } = await deployContract(providerLocal, walletLocal, build.abi, build.bytecode, [name, symbol, decimals, supplyUnits.toString()]);
-        console.log('Deployed at:', address);
-        const txHash = deployTx && deployTx.hash ? deployTx.hash : (contract.deployTransaction && contract.deployTransaction.hash ? contract.deployTransaction.hash : null);
-        if (txHash) console.log('TX:', (process.env.EXPLORER_BASE||'') + '/tx/' + txHash);
-        saveDeployed({ type:'ERC20', name, symbol, address, tx: txHash, timestamp: new Date().toISOString() });
-      } catch(e) {
-        console.log('Deploy failed:', e && e.message ? e.message : e);
-      }
-    } else if (idx === 1) {
-      const build = loadBuild('SimpleERC721');
-      if (!build) { console.log('Artifact SimpleERC721 not found in build/. Run compile_all.js'); continue; }
-      console.log('Deploy NFT (ERC721)');
-      const mode = await askNumbered(['Deploy Manual (input name/symbol)','Deploy Auto (random name)','Back'],'Pilih mode:');
-      if (mode === 2) continue;
-      let name='MyNFT', symbol='MNFT';
-      if (mode === 0) { name = await askInput('NFT name', name); symbol = await askInput('NFT symbol', symbol); }
-      else { const r = Math.random().toString(36).slice(2,8).toUpperCase(); name=`NFT${r}`; symbol=`N${r.slice(0,3)}`; }
-      const mintCount = Number(await askInput('Initial mint count (mint to deployer) (default 100)', '100')) || 100;
-      try {
-        const { contract, address, deployTx } = await deployContract(providerLocal, walletLocal, build.abi, build.bytecode, [name, symbol]);
-        console.log('Deployed at:', address);
-        if (deployTx && deployTx.hash) console.log('TX:', (process.env.EXPLORER_BASE||'') + '/tx/' + deployTx.hash);
-        // attempt to mint (calls mint repeatedly; caution large counts)
-        try {
-          const c = new ethers.Contract(address, build.abi, walletLocal);
-          if (typeof c.mint === 'function') {
-            console.log('Minting', mintCount, 'to deployer...');
-            for (let i=0;i<mintCount;i++) {
-              const tx = await c.mint(await walletLocal.getAddress());
-              await tx.wait(1);
-            }
-            console.log('Minting done.');
-          } else {
-            console.log('Contract has no mint method to auto-mint.');
-          }
-        } catch(e) {
-          console.log('Auto-mint failed:', e && e.message ? e.message : e);
-        }
-        saveDeployed({ type:'ERC721', name, symbol, address, tx: deployTx && deployTx.hash, minted: mintCount, timestamp: new Date().toISOString() });
-      } catch(e) {
-        console.log('Deploy failed:', e && e.message ? e.message : e);
-      }
-    }
+async function askNumbered(items, prompt){
+  items.forEach((it,i)=>console.log(chalk.cyan(`${i+1}. ${it}`)));
+  while(true){
+    const n = Number(await rlQuestion(prompt+' '));
+    if(n>=1 && n<=items.length) return n-1;
+    console.log(chalk.red('Nomor tidak valid'));
   }
 }
+async function askInput(msg, def=''){
+  const a = await rlQuestion(`${msg}${def?` (${def})`:''}: `);
+  return a===''?def:a;
+}
 
-if (require.main === module) runDeployMenu().catch(e=>{ console.error('Fatal:', e && e.stack ? e.stack : e); process.exit(1); });
-module.exports = { runDeployMenu };
+function loadBuild(name){
+  const abi = JSON.parse(fs.readFileSync(path.join(BUILD_DIR,`${name}.abi.json`)));
+  const bytecode = fs.readFileSync(path.join(BUILD_DIR,`${name}.bytecode.txt`),'utf8');
+  return { abi, bytecode };
+}
+
+module.exports.runDeployMenu = async function({ provider, wallet }){
+  while(true){
+    const sel = await askNumbered(
+      ['Deploy Token (ERC20)','Deploy NFT (ERC721)','Back'],
+      'Deploy menu'
+    );
+    if (sel === 2) return;
+
+    if (sel === 0) {
+      const { abi, bytecode } = loadBuild('SimpleERC20');
+      const name = await askInput('Token name','MyToken');
+      const symbol = await askInput('Symbol','MTK');
+      const decimals = Number(await askInput('Decimals','18'));
+      const supply = BigInt(await askInput('Total supply','1000000000'));
+      const units = supply * 10n**BigInt(decimals);
+
+      const spin = ora('Deploying ERC20...').start();
+      const f = new ethers.ContractFactory(abi, bytecode, wallet);
+      const c = await f.deploy(name, symbol, decimals, units.toString());
+      await c.waitForDeployment();
+      spin.succeed('ERC20 Deployed');
+
+      console.log(chalk.green('Address:'), c.target);
+      console.log(process.env.EXPLORER_BASE+'/tx/'+c.deploymentTransaction().hash);
+    }
+
+    if (sel === 1) {
+      const { abi, bytecode } = loadBuild('SimpleERC721');
+      const name = await askInput('NFT name','MyNFT');
+      const symbol = await askInput('Symbol','MNFT');
+      const mintCount = Number(await askInput('Initial mint count','100'));
+
+      const spin = ora('Deploying ERC721...').start();
+      const f = new ethers.ContractFactory(abi, bytecode, wallet);
+      const c = await f.deploy(name, symbol);
+      await c.waitForDeployment();
+      spin.succeed('NFT DEPLOYED');
+
+      console.log(chalk.green('Contract:'), c.target);
+      console.log(process.env.EXPLORER_BASE+'/tx/'+c.deploymentTransaction().hash);
+
+      console.log(chalk.yellow('\nInitial Mint Phase'));
+      const nft = new ethers.Contract(c.target, abi, wallet);
+      for (let i=0;i<mintCount;i++){
+        const tx = await nft.mint(await wallet.getAddress());
+        await tx.wait(1);
+      }
+      console.log(chalk.green('Minting completed'));
+    }
+  }
+};
