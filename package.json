@@ -1,20 +1,21 @@
 {
   "name": "auto-tx-tempo",
-  "version": "1.0.2",
-  "description": "auto.tx by didinska - Send / Deploy / Faucet (RPC) with Premium UI",
+  "version": "1.0.0",
+  "description": "auto.tx by didinska - Send / Deploy / Faucet (RPC) CLI (ethers v6)",
   "main": "main.js",
   "scripts": {
-    "start": "node main.js"
+    "start": "node main.js",
+    "deploy": "node deploy.js",
+    "send": "node send.js",
+    "faucet": "node faucet_rpc.js"
   },
   "author": "didinska",
   "license": "MIT",
   "dependencies": {
-    "chalk": "^5.3.0",
-    "ethers": "^6.16.0",
     "dotenv": "^10.0.0",
+    "ethers": "^6.0.0",
     "cli-progress": "^3.9.1",
     "ora": "^6.1.2",
-    "figlet": "^1.7.0",
-    "gradient-string": "^2.0.2"
+    "chalk": "^5.3.0"
   }
 }
