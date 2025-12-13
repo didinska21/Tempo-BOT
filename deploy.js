@@ -1,58 +1,46 @@
-// deploy.js (ESM - FINAL STABLE)
+// deploy.js — FINAL STABLE (ESM)
 import readline from 'readline';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { ContractFactory } from 'ethers';
+import { ContractFactory, Contract } from 'ethers';
 
-// ===== path safe for ESM =====
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const BUILD_DIR = path.join(__dirname, 'build');
+const BUILD_DIR = path.join(process.cwd(), 'build');
 
-// ===== readline =====
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(res => rl.question(q, a => {
-    rl.close();
-    res(a);
-  }));
+  return new Promise(res => rl.question(q, a => { rl.close(); res(a); }));
 }
 
-async function askNumbered(items, title) {
+async function askNumbered(items, title = 'Pilih:') {
   console.log(chalk.cyan('\n' + title));
   items.forEach((it, i) => console.log(chalk.cyan(` ${i + 1}. ${it}`)));
   while (true) {
     const n = Number(await rlQuestion('> '));
-    if (!isNaN(n) && n >= 1 && n <= items.length) return n - 1;
-    console.log(chalk.red('Masukkan nomor valid'));
+    if (!Number.isNaN(n) && n >= 1 && n <= items.length) return n - 1;
+    console.log(chalk.red('Nomor tidak valid'));
   }
 }
 
-// ===== load build safely =====
 function loadBuild(name) {
   const abiPath = path.join(BUILD_DIR, `${name}.abi.json`);
-  const bytecodePath = path.join(BUILD_DIR, `${name}.bytecode.txt`);
-
-  if (!fs.existsSync(abiPath) || !fs.existsSync(bytecodePath)) {
-    throw new Error(
-      `Artifact ${name} tidak ditemukan.\n` +
-      `Pastikan file berikut ada:\n` +
-      `- ${abiPath}\n` +
-      `- ${bytecodePath}\n\n` +
-      `Jalankan: node scripts/compile_all.js`
-    );
+  const bytePath = path.join(BUILD_DIR, `${name}.bytecode.txt`);
+  if (!fs.existsSync(abiPath) || !fs.existsSync(bytePath)) {
+    throw new Error(`Artifact ${name} tidak ditemukan di build/`);
   }
-
   return {
     abi: JSON.parse(fs.readFileSync(abiPath, 'utf8')),
-    bytecode: fs.readFileSync(bytecodePath, 'utf8')
+    bytecode: fs.readFileSync(bytePath, 'utf8').trim()
   };
 }
 
-// ===== MAIN =====
+function randomName(prefix) {
+  const r = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `${prefix}${r}`;
+}
+
+// ================= DEPLOY MENU =================
 export async function runDeployMenu({ provider, wallet }) {
   while (true) {
     console.clear();
@@ -63,62 +51,111 @@ export async function runDeployMenu({ provider, wallet }) {
       ['Deploy ERC20 Token', 'Deploy ERC721 NFT', 'Back'],
       'Pilih:'
     );
-
     if (sel === 2) return;
 
-    try {
-      // ================= ERC20 =================
-      if (sel === 0) {
-        const { abi, bytecode } = loadBuild('SimpleERC20');
+    // ================= ERC20 =================
+    if (sel === 0) {
+      const mode = await askNumbered(
+        ['Deploy Manual', 'Deploy Random', 'Back'],
+        'ERC20 Mode:'
+      );
+      if (mode === 2) continue;
 
-        const name = await rlQuestion('Token name: ');
-        const symbol = await rlQuestion('Token symbol: ');
-        const supply = await rlQuestion('Total supply (human): ');
+      const name = mode === 0
+        ? await rlQuestion('Token name: ')
+        : randomName('Token');
 
-        const spin = ora('Deploying ERC20...').start();
+      const symbol = mode === 0
+        ? await rlQuestion('Token symbol: ')
+        : randomName('T').slice(0, 4);
+
+      const decimals = 18;
+      const supplyHuman = 1_000_000n;
+      const supplyUnits = supplyHuman * (10n ** 18n);
+
+      const { abi, bytecode } = loadBuild('SimpleERC20');
+      const spin = ora('Deploying ERC20...').start();
+
+      try {
         const factory = new ContractFactory(abi, bytecode, wallet);
         const contract = await factory.deploy(
           name,
           symbol,
-          18,
-          BigInt(supply) * 10n ** 18n
+          decimals,
+          supplyUnits.toString()
         );
         await contract.waitForDeployment();
         spin.succeed('ERC20 deployed');
 
         console.log(chalk.green('Address:'), contract.target);
-        console.log(
-          chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${contract.deploymentTransaction().hash}`)
-        );
+        console.log(chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${contract.deploymentTransaction().hash}`));
+      } catch (e) {
+        spin.fail('Deploy failed');
+        console.log(chalk.red(e.message));
       }
 
-      // ================= ERC721 =================
-      if (sel === 1) {
-        const { abi, bytecode } = loadBuild('SimpleERC721');
+      await rlQuestion('\nEnter untuk kembali...');
+    }
 
-        const name = await rlQuestion('NFT name: ');
-        const symbol = await rlQuestion('NFT symbol: ');
+    // ================= ERC721 =================
+    if (sel === 1) {
+      const mode = await askNumbered(
+        ['Deploy Manual', 'Deploy Random', 'Back'],
+        'ERC721 Mode:'
+      );
+      if (mode === 2) continue;
 
-        const spin = ora('Deploying ERC721...').start();
+      const name = mode === 0
+        ? await rlQuestion('NFT name: ')
+        : randomName('NFT');
+
+      const symbol = mode === 0
+        ? await rlQuestion('NFT symbol: ')
+        : randomName('N').slice(0, 4);
+
+      const mintTotal = 100;
+      const { abi, bytecode } = loadBuild('SimpleERC721');
+
+      const spin = ora('Deploying ERC721...').start();
+
+      try {
         const factory = new ContractFactory(abi, bytecode, wallet);
         const contract = await factory.deploy(name, symbol);
         await contract.waitForDeployment();
         spin.succeed('ERC721 deployed');
 
-        console.log(chalk.green('NFT Contract:'), contract.target);
-        console.log(
-          chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${contract.deploymentTransaction().hash}`)
+        console.log(chalk.green('NFT Address:'), contract.target);
+        console.log(chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${contract.deploymentTransaction().hash}`));
+
+        const next = await askNumbered(
+          ['Mint sekarang', 'Kembali ke menu'],
+          'Selanjutnya:'
         );
 
-        console.log(
-          chalk.gray('\nℹ️  Mint NFT dilakukan manual (tidak auto mint)')
-        );
+        if (next === 0) {
+          const nft = new Contract(contract.target, abi, wallet);
+          const mintSpin = ora('Minting NFT...').start();
+
+          for (let i = 1; i <= mintTotal; i++) {
+            try {
+              const tx = await nft.mint(await wallet.getAddress());
+              await tx.wait(1);
+              mintSpin.text = `Minting NFT ${i}/${mintTotal}`;
+            } catch (e) {
+              mintSpin.fail(`Mint gagal di ${i}`);
+              break;
+            }
+          }
+
+          mintSpin.succeed(`Mint selesai (${mintTotal}/${mintTotal})`);
+        }
+
+      } catch (e) {
+        spin.fail('Deploy failed');
+        console.log(chalk.red(e.message));
       }
-    } catch (e) {
-      console.log(chalk.red('\nDeploy failed:'));
-      console.log(chalk.red(e.message || e));
-    }
 
-    await rlQuestion('\nEnter untuk kembali ke menu...');
+      await rlQuestion('\nEnter untuk kembali...');
+    }
   }
 }
