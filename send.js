@@ -1,4 +1,4 @@
-// send.js (ESM - beautified, stable)
+// send.js (ESM - FINAL STABLE ROUND-ROBIN FIX)
 import readline from 'readline';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -11,7 +11,7 @@ const ERC20_ABI = [
   'function transfer(address,uint256) returns (bool)'
 ];
 
-// ---------- helpers ----------
+// ================= helpers =================
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(res => rl.question(q, a => { rl.close(); res(a); }));
@@ -36,14 +36,8 @@ function short(hash) {
   return hash.slice(0, 10) + '...' + hash.slice(-6);
 }
 
-// ---------- core ----------
-async function sendToken({
-  wallet,
-  token,
-  to,
-  amountHuman,
-  waitConfirm
-}) {
+// ================= send single tx =================
+async function sendOnce({ wallet, token, to, amountHuman, waitConfirm }) {
   const c = new Contract(token.address, ERC20_ABI, wallet);
   const dec = await c.decimals();
   const amount = parseUnits(amountHuman, dec);
@@ -55,15 +49,15 @@ async function sendToken({
     const spin = ora('Waiting confirmation...').start();
     const r = await tx.wait(1);
     spin.succeed(`Confirmed in block ${r.blockNumber}`);
+    console.log(chalk.green(`✔ Token : ${token.symbol}`));
   }
 
   console.log(
-    chalk.green(`TX:`),
-    chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${tx.hash}`)
+    chalk.cyan(`TX: ${process.env.EXPLORER_BASE}/tx/${tx.hash}`)
   );
 }
 
-// ---------- menu ----------
+// ================= MAIN MENU =================
 export async function runSendMenu({ provider, wallet, tokens }) {
   while (true) {
     console.clear();
@@ -95,39 +89,85 @@ export async function runSendMenu({ provider, wallet, tokens }) {
       to = addr;
     }
 
-    const amount = await rlQuestion('Jumlah token per tx (default 1): ') || '1';
-    const count = Number(await rlQuestion('Jumlah TX (0 = sampai balance habis): ') || '1');
-    const isUnlimited = count === 0;
+    const amount = (await rlQuestion('Jumlah token per tx (default 1): ')) || '1';
+    const sendCount = Number((await rlQuestion('Jumlah TX (0 = sampai balance habis): ')) || '1');
     const waitConfirm = (await askNumbered(['Yes', 'No'], 'Tunggu konfirmasi?')) === 0;
 
-    const list = sel === tokens.length ? tokens : [tokens[sel]];
+    const isSendAll = sel === tokens.length;
+    const isUnlimited = sendCount === 0;
+
+    // ===== PROGRESS BAR (FIXED) =====
     const bar = new SingleBar({
-  format: isUnlimited
-    ? chalk.cyan('Progress') + ' |{bar}| TX sent: {value}'
-    : chalk.cyan('Progress') + ' |{bar}| {value}/{total} TXs'
-}, Presets.rect);
+      format: isUnlimited
+        ? chalk.cyan('Progress') + ' |{bar}| TX sent: {value}'
+        : chalk.cyan('Progress') + ' |{bar}| {value}/{total} TXs',
+    }, Presets.rect);
 
-if (isUnlimited) {
-  bar.start(1, 0); // total dummy, tidak ditampilkan
-} else {
-  bar.start(count, 0);
-  }
+    if (isUnlimited) {
+      bar.start(1, 0); // dummy total
+    } else {
+      bar.start(sendCount, 0);
+    }
 
-    for (const token of list) {
-      let sent = 0;
-      while (count === 0 || sent < count) {
-        try {
-          await sendToken({ wallet, token, to, amountHuman: amount, waitConfirm });
-          sent++;
-          bar.increment();
-        } catch (e) {
-          console.log(chalk.red('TX failed:'), e.message);
-          break;
+    // ================= SEND SEMUA TOKEN (ROUND-ROBIN) =================
+    if (isSendAll) {
+      let totalSent = 0;
+      let round = 0;
+      let stillHasBalance = true;
+
+      while (isUnlimited || round < sendCount) {
+        stillHasBalance = false;
+
+        for (const token of tokens) {
+          try {
+            const c = new Contract(token.address, ERC20_ABI, wallet);
+            const dec = await c.decimals();
+            const bal = await c.balanceOf(await wallet.getAddress());
+            const need = parseUnits(amount, dec);
+
+            if (bal < need) continue;
+
+            await sendOnce({ wallet, token, to, amountHuman: amount, waitConfirm });
+
+            bar.increment();
+            totalSent++;
+            stillHasBalance = true;
+
+          } catch (e) {
+            console.log(chalk.red(`✖ Failed ${token.symbol}: ${e.message}`));
+          }
         }
+
+        if (!stillHasBalance) break;
+        round++;
+      }
+
+      bar.stop();
+      console.log(
+        chalk.green(
+          `\n[${now()}] Send Semua Token selesai — total TX: ${totalSent}\n`
+        )
+      );
+      await rlQuestion(chalk.gray('Enter untuk kembali ke menu...'));
+      continue;
+    }
+
+    // ================= SEND SINGLE TOKEN =================
+    const token = tokens[sel];
+    let sent = 0;
+
+    while (isUnlimited || sent < sendCount) {
+      try {
+        await sendOnce({ wallet, token, to, amountHuman: amount, waitConfirm });
+        sent++;
+        bar.increment();
+      } catch (e) {
+        console.log(chalk.red('TX failed:'), e.message);
+        break;
       }
     }
 
     bar.stop();
     await rlQuestion(chalk.gray('\nEnter untuk kembali ke menu...'));
   }
-}
+                         }
