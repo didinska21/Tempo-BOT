@@ -1,11 +1,19 @@
-// faucet.js (ESM - RPC only, upgraded)
+// faucet.js (ESM - RPC only, formatted output)
 import 'dotenv/config';
 import chalk from 'chalk';
 import ora from 'ora';
 import readline from 'readline';
 import { JsonRpcProvider, Wallet } from 'ethers';
 
-// readline helper
+// ===== CONFIG =====
+const TOKENS = [
+  { symbol: 'PathUSD', amount: '1.000.000' },
+  { symbol: 'AlphaUSD', amount: '1.000.000' },
+  { symbol: 'BetaUSD', amount: '1.000.000' },
+  { symbol: 'ThetaUSD', amount: '1.000.000' }
+];
+
+// ===== readline helper =====
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(res => rl.question(q, a => {
@@ -25,48 +33,55 @@ export async function runInteractive() {
   console.log('Address:', chalk.cyan(address));
   console.log();
 
-  // === INPUT JUMLAH CLAIM ===
-  let count;
+  // input jumlah claim
+  let total;
   while (true) {
-    const input = (await rlQuestion('Jumlah faucet yang mau di-claim (1 - 100): ')).trim();
-    const n = Number(input);
-    if (!Number.isNaN(n) && n >= 1 && n <= 100) {
-      count = n;
+    const v = Number((await rlQuestion('Jumlah claim faucet (1 - 100): ')).trim());
+    if (!isNaN(v) && v >= 1 && v <= 100) {
+      total = v;
       break;
     }
-    console.log(chalk.red('Masukkan angka antara 1 sampai 100'));
+    console.log(chalk.red('Masukkan angka 1 - 100'));
   }
 
-  console.log(chalk.gray(`\nMulai claim ${count}x...\n`));
+  console.log();
 
-  let success = 0;
-  let failed = 0;
+  for (let i = 1; i <= total; i++) {
+    const spin = ora(`Claim faucet ${i}/${total}...`).start();
 
-  for (let i = 1; i <= count; i++) {
-    const spin = ora(`Claiming faucet ${i}/${count}...`).start();
     try {
-      const res = await provider.send('tempo_fundAddress', [address]);
-      spin.succeed(`Claim ${i} success`);
-      success++;
+      const txHashes = await provider.send('tempo_fundAddress', [address]);
+      spin.succeed(`Berhasil claim faucet`);
 
-      console.log(
-        chalk.green('✔ Result:'),
-        Array.isArray(res) ? res.join(', ').slice(0, 120) : res
-      );
+      console.log(chalk.cyan.bold(`\n${i}.`));
+      console.log(chalk.green('berhasil claim faucet'));
+
+      if (Array.isArray(txHashes)) {
+        txHashes.forEach((tx, idx) => {
+          const token = TOKENS[idx];
+          if (!token) return;
+
+          console.log(
+            chalk.green('√'),
+            chalk.white(`${token.amount} ${token.symbol}`),
+            chalk.gray(':'),
+            chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${tx}`)
+          );
+        });
+      } else {
+        console.log(chalk.yellow('Result:'), txHashes);
+      }
+
     } catch (e) {
-      spin.fail(`Claim ${i} failed`);
+      spin.fail(`Claim ${i} gagal`);
       console.log(chalk.red(e.message || e));
-      failed++;
     }
 
-    // delay kecil biar aman
+    console.log(); // spasi antar batch
     await new Promise(r => setTimeout(r, 1200));
   }
 
-  console.log(chalk.gray('\n────────────────────────'));
-  console.log(chalk.green(`Success: ${success}`), chalk.red(`Failed: ${failed}`));
-  console.log(chalk.gray('Faucet session selesai.'));
-  console.log();
-
-  await new Promise(r => setTimeout(r, 1500));
-    }
+  console.log(chalk.gray('────────────────────────'));
+  console.log(chalk.green('Faucet selesai.'));
+  await new Promise(r => setTimeout(r, 1200));
+}
