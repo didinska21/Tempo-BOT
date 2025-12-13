@@ -1,4 +1,4 @@
-// faucet.js (ESM - RPC only, formatted output + delay)
+// faucet.js (ESM - RPC only, UX premium + countdown)
 import 'dotenv/config';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -13,10 +13,11 @@ const TOKENS = [
   { symbol: 'ThetaUSD', amount: '1.000.000' }
 ];
 
-const CLAIM_DELAY_MS = 15_000;   // 15 detik antar claim
-const FINISH_DELAY_MS = 30_000; // 30 detik sebelum balik ke main menu
+const PRE_CLAIM_ANIM_MS = 4000;  // animasi sebelum klaim
+const CLAIM_DELAY_SEC = 15;     // jeda antar klaim
+const FINISH_DELAY_SEC = 30;    // jeda sebelum balik menu
 
-// ===== readline helper =====
+// ===== helpers =====
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(res => rl.question(q, a => {
@@ -27,6 +28,17 @@ function rlQuestion(q) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+async function countdown(seconds, label) {
+  for (let i = seconds; i > 0; i--) {
+    process.stdout.write(
+      chalk.gray(`\r${label} ${chalk.cyan(i + 's')}   `)
+    );
+    await sleep(1000);
+  }
+  process.stdout.write('\r'.padEnd(50) + '\r');
+}
+
+// ===== MAIN =====
 export async function runInteractive() {
   const provider = new JsonRpcProvider(process.env.RPC_URL);
   const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
@@ -38,7 +50,7 @@ export async function runInteractive() {
   console.log('Address:', chalk.cyan(address));
   console.log();
 
-  // input jumlah claim
+  // jumlah claim
   let total;
   while (true) {
     const v = Number((await rlQuestion('Jumlah claim faucet (1 - 100): ')).trim());
@@ -52,11 +64,14 @@ export async function runInteractive() {
   console.log();
 
   for (let i = 1; i <= total; i++) {
-    const spin = ora(`Claim faucet ${i}/${total}...`).start();
+    // animasi sebelum klaim
+    const prep = ora(`Menyiapkan klaim ${i}/${total}...`).start();
+    await sleep(PRE_CLAIM_ANIM_MS);
+    prep.text = 'Mengirim request faucet...';
 
     try {
       const txHashes = await provider.send('tempo_fundAddress', [address]);
-      spin.succeed('Berhasil claim faucet');
+      prep.succeed('Berhasil claim faucet');
 
       console.log(chalk.cyan.bold(`\n${i}.`));
       console.log(chalk.green('berhasil claim faucet'));
@@ -78,24 +93,21 @@ export async function runInteractive() {
       }
 
     } catch (e) {
-      spin.fail(`Claim ${i} gagal`);
+      prep.fail(`Claim ${i} gagal`);
       console.log(chalk.red(e.message || e));
     }
 
-    // jeda antar claim
+    // countdown antar klaim
     if (i < total) {
-      console.log(
-        chalk.gray(`\nMenunggu ${CLAIM_DELAY_MS / 1000} detik sebelum claim berikutnya...\n`)
-      );
-      await sleep(CLAIM_DELAY_MS);
+      console.log();
+      await countdown(CLAIM_DELAY_SEC, 'Menunggu klaim berikutnya dalam');
+      console.log();
     }
   }
 
   console.log(chalk.gray('────────────────────────'));
   console.log(chalk.green('Semua claim faucet selesai.'));
-  console.log(
-    chalk.gray(`Menunggu ${FINISH_DELAY_MS / 1000} detik sebelum kembali ke main menu...`)
-  );
+  console.log();
 
-  await sleep(FINISH_DELAY_MS);
-              }
+  await countdown(FINISH_DELAY_SEC, 'Kembali ke main menu dalam');
+}
