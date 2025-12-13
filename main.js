@@ -1,123 +1,100 @@
-// main.js - SUPER PREMIUM CLI UI (BOX + COLOR + SPINNER)
-require('dotenv').config();
-const ethers = require('ethers');
-const readline = require('readline');
-const chalk = require('chalk').default;
-const ora = require('ora');
+// main.js — FINAL ESM STABLE VERSION
+import 'dotenv/config';
+import { JsonRpcProvider, Wallet, Contract, formatUnits } from 'ethers';
+import readline from 'readline';
+import chalk from 'chalk';
+import ora from 'ora';
 
-const sendModule = require('./send');
-const deployModule = require('./deploy');
-const faucet = require('./faucet');
+import { runSendMenu } from './send.js';
+import { runDeployMenu } from './deploy.js';
+import { runInteractive as runFaucet } from './faucet.js';
 
-// ================= helpers =================
-function rlQuestion(q){
+// ===== readline helper =====
+function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(res => rl.question(q, a => { rl.close(); res(a); }));
+  return new Promise(res => rl.question(q, a => {
+    rl.close();
+    res(a);
+  }));
 }
 
-async function askNumbered(items, prompt='Pilih (nomor):'){
-  items.forEach((it,i)=>{
-    console.log(chalk.cyan(`  ${i+1}. ${it}`));
+async function askNumbered(items, prompt = 'Pilih menu:') {
+  items.forEach((it, i) => {
+    console.log(chalk.cyan(` ${i + 1}. ${it}`));
   });
-  while(true){
+  while (true) {
     const a = (await rlQuestion(chalk.yellow(`\n${prompt} `))).trim();
     const n = Number(a);
-    if(!Number.isNaN(n) && n>=1 && n<=items.length) return n-1;
-    console.log(chalk.red('❌ Masukkan nomor valid.'));
+    if (!Number.isNaN(n) && n >= 1 && n <= items.length) return n - 1;
+    console.log(chalk.red('Masukkan nomor valid'));
   }
 }
 
-// ================= ERC20 ABI =================
+// ===== ERC20 ABI (READ ONLY) =====
 const ERC20_ABI = [
-  "function decimals() view returns (uint8)",
-  "function balanceOf(address) view returns (uint256)"
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address) view returns (uint256)'
 ];
 
-// ================= token helpers =================
+// ===== tokens =====
 function parseTokensEnv() {
   return (process.env.TOKENS || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean)
     .map(s => {
-      const [sym, addr] = s.split(':').map(x => x && x.trim());
-      return { symbol: sym, address: addr };
+      const [symbol, address] = s.split(':');
+      return { symbol, address };
     });
 }
 
-async function loadTokenBalances(provider, walletAddress, tokens) {
+async function loadTokenBalances(provider, address, tokens) {
   for (const t of tokens) {
-    t.balanceHuman = 'n/a';
-    if (!t.address) continue;
+    t.balance = 'n/a';
     try {
-      const c = new ethers.Contract(t.address, ERC20_ABI, provider);
+      const c = new Contract(t.address, ERC20_ABI, provider);
       const dec = await c.decimals();
-      const bal = await c.balanceOf(walletAddress);
-      t.balanceHuman = ethers.formatUnits(bal, dec);
+      const bal = await c.balanceOf(address);
+      t.balance = formatUnits(bal, dec);
     } catch {
-      t.balanceHuman = 'err';
+      t.balance = 'err';
     }
   }
 }
 
-// ================= UI BOX =================
-function boxLine(text = '', width = 43) {
-  const pad = width - text.length;
-  return chalk.cyan('│ ') + text + ' '.repeat(Math.max(0, pad)) + chalk.cyan(' │');
+// ===== UI BOX =====
+function line(text = '') {
+  return chalk.cyan('│ ') + text.padEnd(43) + chalk.cyan(' │');
 }
 
-function renderBoxHeader(title) {
+function renderTop() {
   console.log(chalk.cyan('┌' + '─'.repeat(45) + '┐'));
-  console.log(
-    boxLine(
-      chalk.magenta.bold(title),
-      43
-    )
-  );
+  console.log(line(chalk.magenta.bold('AUTO.TX by didinska')));
   console.log(chalk.cyan('├' + '─'.repeat(45) + '┤'));
 }
 
-// ================= RENDER MAIN =================
-async function renderMainHeader({ provider, walletAddress, tokens }) {
+// ===== render header =====
+async function renderMain({ provider, address, tokens }) {
   console.clear();
+  renderTop();
 
-  renderBoxHeader('AUTO.TX by didinska');
-
-  console.log(
-    boxLine(
-      chalk.yellow('Wallet : ') + chalk.white(walletAddress),
-      43
-    )
-  );
-
+  console.log(line(chalk.yellow('Wallet   : ') + chalk.white(address)));
   if (process.env.EXPLORER_BASE) {
-    console.log(
-      boxLine(
-        chalk.yellow('Explorer: ') + chalk.white(process.env.EXPLORER_BASE),
-        43
-      )
-    );
+    console.log(line(chalk.yellow('Explorer : ') + chalk.white(process.env.EXPLORER_BASE)));
   }
 
   console.log(chalk.cyan('├' + '─'.repeat(45) + '┤'));
 
-  const spinner = ora({
-    text: 'Loading token balances...',
-    spinner: 'dots',
-    color: 'cyan'
-  }).start();
-
-  await loadTokenBalances(provider, walletAddress, tokens);
-
+  const spinner = ora({ text: 'Loading balances...', color: 'cyan' }).start();
+  await loadTokenBalances(provider, address, tokens);
   spinner.succeed('Balances loaded');
 
-  tokens.forEach((t,i)=>{
+  tokens.forEach((t, i) => {
     console.log(
-      boxLine(
-        chalk.green(`${i+1}. ${t.symbol}`) +
+      line(
+        chalk.green(`${i + 1}. ${t.symbol}`) +
         chalk.gray(' | ') +
-        chalk.green.bold(t.balanceHuman),
-        43
+        chalk.green.bold(t.balance)
       )
     );
   });
@@ -125,68 +102,41 @@ async function renderMainHeader({ provider, walletAddress, tokens }) {
   console.log(chalk.cyan('└' + '─'.repeat(45) + '┘'));
 }
 
-// ================= MAIN =================
+// ===== MAIN =====
 async function main() {
   if (!process.env.RPC_URL) {
     console.log(chalk.red('RPC_URL missing in .env'));
     process.exit(1);
   }
 
-  const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-  const wallet = process.env.PRIVATE_KEY
-    ? new ethers.Wallet(process.env.PRIVATE_KEY, provider)
-    : null;
+  const provider = new JsonRpcProvider(process.env.RPC_URL);
+  const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
+  const address = await wallet.getAddress();
 
-  const walletAddress = wallet ? await wallet.getAddress() : 'NoKey';
   const tokens = parseTokensEnv();
 
   while (true) {
-    await renderMainHeader({ provider, walletAddress, tokens });
+    await renderMain({ provider, address, tokens });
 
-    console.log('\n');
-    const sel = await askNumbered(
-      [
-        'Send Address (per token / send all)',
-        'Deploy Kontrak (Token / NFT)',
-        'Claim Faucet (RPC)',
-        'Exit'
-      ],
-      'Pilih menu'
-    );
+    const choice = await askNumbered([
+      'Send Address (per token / send all)',
+      'Deploy Kontrak (Token / NFT)',
+      'Claim Faucet (RPC)',
+      'Exit'
+    ]);
 
-    const spinner = ora({ text: 'Processing...', spinner: 'line', color: 'magenta' }).start();
-
-    if (sel === 3) {
-      spinner.stop();
-      console.log(chalk.green('\n👋 Bye.\n'));
+    if (choice === 3) {
+      console.log(chalk.green('\nBye 👋\n'));
       process.exit(0);
     }
 
-    spinner.stop();
-
-    if (sel === 0) {
-      await sendModule.runSendMenu({ provider, wallet, ethers, tokens });
-    }
-
-    if (sel === 1) {
-      await deployModule.runDeployMenu({ provider, wallet, ethers });
-    }
-
-    if (sel === 2) {
-      await faucet.runInteractive();
-    }
-
-    const backSpinner = ora({ text: 'Returning to main menu...', spinner: 'dots', color: 'cyan' }).start();
-    await new Promise(r => setTimeout(r, 800));
-    backSpinner.stop();
+    if (choice === 0) await runSendMenu({ provider, wallet });
+    if (choice === 1) await runDeployMenu({ provider, wallet });
+    if (choice === 2) await runFaucet();
   }
 }
 
-if (require.main === module) {
-  main().catch(e => {
-    console.error(chalk.red('Fatal:'), e && e.stack ? e.stack : e);
-    process.exit(1);
-  });
-}
-
-module.exports = { main };
+main().catch(err => {
+  console.error(chalk.red('Fatal:'), err);
+  process.exit(1);
+});
