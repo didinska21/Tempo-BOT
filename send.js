@@ -97,14 +97,21 @@ export async function runSendMenu({ provider, wallet, tokens }) {
 
     const amount = await rlQuestion('Jumlah token per tx (default 1): ') || '1';
     const count = Number(await rlQuestion('Jumlah TX (0 = sampai balance habis): ') || '1');
+    const isUnlimited = sendCount === 0;
     const waitConfirm = (await askNumbered(['Yes', 'No'], 'Tunggu konfirmasi?')) === 0;
 
     const list = sel === tokens.length ? tokens : [tokens[sel]];
-    const bar = new SingleBar(
-      { format: chalk.cyan('Progress') + ' |{bar}| {value}/{total}' },
-      Presets.shades_classic
-    );
+    const progress = new SingleBar({
+  format: isUnlimited
+    ? chalk.cyan('Progress') + ' |{bar}| TX sent: {value}'
+    : chalk.cyan('Progress') + ' |{bar}| {value}/{total} TXs'
+}, Presets.rect);
 
+if (isUnlimited) {
+  progress.start(1, 0); // total dummy, TIDAK ditampilkan
+} else {
+  progress.start(totalPlanned, 0);
+      }
     bar.start(count === 0 ? list.length : count, 0);
 
     for (const token of list) {
