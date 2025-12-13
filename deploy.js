@@ -1,85 +1,77 @@
-// deploy.js - FINAL PREMIUM
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const ethers = require('ethers');
-const readline = require('readline');
-const chalk = require('chalk').default;
-const ora = require('ora');
+// deploy.js (ESM - beautified)
+import readline from 'readline';
+import chalk from 'chalk';
+import ora from 'ora';
+import fs from 'fs';
+import path from 'path';
+import { ContractFactory } from 'ethers';
 
-const BUILD_DIR = path.join(process.cwd(), 'build');
+const BUILD = './build';
 
-function rlQuestion(q){
+function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
+  return new Promise(res => rl.question(q, a => { rl.close(); res(a); }));
 }
-async function askNumbered(items, prompt){
-  items.forEach((it,i)=>console.log(chalk.cyan(`${i+1}. ${it}`)));
-  while(true){
-    const n = Number(await rlQuestion(prompt+' '));
-    if(n>=1 && n<=items.length) return n-1;
-    console.log(chalk.red('Nomor tidak valid'));
+
+async function askNumbered(items, title) {
+  console.log(chalk.cyan('\n' + title));
+  items.forEach((it, i) => console.log(chalk.cyan(` ${i + 1}. ${it}`)));
+  while (true) {
+    const n = Number(await rlQuestion('> '));
+    if (!isNaN(n) && n >= 1 && n <= items.length) return n - 1;
   }
 }
-async function askInput(msg, def=''){
-  const a = await rlQuestion(`${msg}${def?` (${def})`:''}: `);
-  return a===''?def:a;
+
+function loadBuild(name) {
+  return {
+    abi: JSON.parse(fs.readFileSync(path.join(BUILD, `${name}.abi.json`))),
+    bytecode: fs.readFileSync(path.join(BUILD, `${name}.bytecode.txt`), 'utf8')
+  };
 }
 
-function loadBuild(name){
-  const abi = JSON.parse(fs.readFileSync(path.join(BUILD_DIR,`${name}.abi.json`)));
-  const bytecode = fs.readFileSync(path.join(BUILD_DIR,`${name}.bytecode.txt`),'utf8');
-  return { abi, bytecode };
-}
+export async function runDeployMenu({ provider, wallet }) {
+  while (true) {
+    console.clear();
+    console.log(chalk.magenta.bold('DEPLOY MENU'));
+    console.log(chalk.gray('────────────────────────'));
 
-module.exports.runDeployMenu = async function({ provider, wallet }){
-  while(true){
     const sel = await askNumbered(
-      ['Deploy Token (ERC20)','Deploy NFT (ERC721)','Back'],
-      'Deploy menu'
+      ['Deploy ERC20 Token', 'Deploy ERC721 NFT', 'Back'],
+      'Pilih:'
     );
     if (sel === 2) return;
 
     if (sel === 0) {
       const { abi, bytecode } = loadBuild('SimpleERC20');
-      const name = await askInput('Token name','MyToken');
-      const symbol = await askInput('Symbol','MTK');
-      const decimals = Number(await askInput('Decimals','18'));
-      const supply = BigInt(await askInput('Total supply','1000000000'));
-      const units = supply * 10n**BigInt(decimals);
+      const name = await rlQuestion('Token name: ');
+      const symbol = await rlQuestion('Token symbol: ');
+      const supply = await rlQuestion('Total supply: ');
 
       const spin = ora('Deploying ERC20...').start();
-      const f = new ethers.ContractFactory(abi, bytecode, wallet);
-      const c = await f.deploy(name, symbol, decimals, units.toString());
+      const f = new ContractFactory(abi, bytecode, wallet);
+      const c = await f.deploy(name, symbol, 18, supply);
       await c.waitForDeployment();
-      spin.succeed('ERC20 Deployed');
+      spin.succeed('ERC20 deployed');
 
       console.log(chalk.green('Address:'), c.target);
-      console.log(process.env.EXPLORER_BASE+'/tx/'+c.deploymentTransaction().hash);
+      console.log(chalk.cyan(`${process.env.EXPLORER_BASE}/tx/${c.deploymentTransaction().hash}`));
     }
 
     if (sel === 1) {
       const { abi, bytecode } = loadBuild('SimpleERC721');
-      const name = await askInput('NFT name','MyNFT');
-      const symbol = await askInput('Symbol','MNFT');
-      const mintCount = Number(await askInput('Initial mint count','100'));
+      const name = await rlQuestion('NFT name: ');
+      const symbol = await rlQuestion('NFT symbol: ');
 
       const spin = ora('Deploying ERC721...').start();
-      const f = new ethers.ContractFactory(abi, bytecode, wallet);
+      const f = new ContractFactory(abi, bytecode, wallet);
       const c = await f.deploy(name, symbol);
       await c.waitForDeployment();
-      spin.succeed('NFT DEPLOYED');
+      spin.succeed('ERC721 deployed');
 
-      console.log(chalk.green('Contract:'), c.target);
-      console.log(process.env.EXPLORER_BASE+'/tx/'+c.deploymentTransaction().hash);
-
-      console.log(chalk.yellow('\nInitial Mint Phase'));
-      const nft = new ethers.Contract(c.target, abi, wallet);
-      for (let i=0;i<mintCount;i++){
-        const tx = await nft.mint(await wallet.getAddress());
-        await tx.wait(1);
-      }
-      console.log(chalk.green('Minting completed'));
+      console.log(chalk.green('NFT Contract:'), c.target);
+      console.log(chalk.gray('Mint dilakukan manual jika diperlukan'));
     }
+
+    await rlQuestion('\nEnter untuk kembali...');
   }
-};
+}
