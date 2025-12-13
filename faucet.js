@@ -1,35 +1,30 @@
-// faucet.js - FINAL PREMIUM
-require('dotenv').config();
-const ethers = require('ethers');
-const chalk = require('chalk').default;
-const ora = require('ora');
+// faucet.js (ESM - RPC only)
+import 'dotenv/config';
+import chalk from 'chalk';
+import ora from 'ora';
+import { JsonRpcProvider, Wallet } from 'ethers';
 
-async function runInteractive(){
-  if (!process.env.RPC_URL || !process.env.PRIVATE_KEY) {
-    console.log(chalk.red('RPC_URL / PRIVATE_KEY missing'));
-    return;
+export async function runInteractive() {
+  const provider = new JsonRpcProvider(process.env.RPC_URL);
+  const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
+  const address = await wallet.getAddress();
+
+  console.clear();
+  console.log(chalk.magenta.bold('FAUCET CLAIM (RPC)'));
+  console.log(chalk.gray('────────────────────────'));
+
+  console.log('Address:', chalk.cyan(address));
+
+  const spin = ora('Claiming faucet...').start();
+  try {
+    const res = await provider.send('tempo_fundAddress', [address]);
+    spin.succeed('Faucet success');
+
+    console.log(chalk.green('Result:'), res);
+  } catch (e) {
+    spin.fail('Faucet failed');
+    console.log(chalk.red(e.message));
   }
 
-  const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-  const addr = await wallet.getAddress();
-
-  const count = Number(process.env.FAUCET_COUNT||'1');
-  const interval = Number(process.env.INTERVAL_MS||'1500');
-
-  console.log(chalk.cyan('Claim Faucet via RPC'));
-  console.log('Address:', addr);
-
-  for (let i=0;i<count;i++){
-    const spin = ora(`Claiming (${i+1}/${count})`).start();
-    try {
-      const res = await provider.send('tempo_fundAddress',[addr]);
-      spin.succeed('Claimed '+JSON.stringify(res).slice(0,60));
-    } catch(e){
-      spin.fail(e.message);
-    }
-    await new Promise(r=>setTimeout(r, interval));
-  }
+  await new Promise(r => setTimeout(r, 1500));
 }
-
-module.exports = { runInteractive };
