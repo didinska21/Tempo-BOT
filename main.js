@@ -2,7 +2,7 @@
 require('dotenv').config();
 const ethers = require('ethers');
 const readline = require('readline');
-const chalk = require('chalk');
+const chalk = require('chalk').default;
 const ora = require('ora');
 
 const sendModule = require('./send');
