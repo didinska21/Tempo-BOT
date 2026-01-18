@@ -22,14 +22,25 @@ function loadConfig() {
 
 // ===== Load Wallets dari .env =====
 function loadWallets(provider) {
-  const pkEnv = process.env.PRIVATE_KEY || '';
-  const keys = pkEnv.split('\n')
-    .map(k => k.trim())
-    .filter(k => k && k.startsWith('0x'));
-
+  const keys = [];
+  
+  // Load PRIVATE_KEY_1, PRIVATE_KEY_2, PRIVATE_KEY_3, dst
+  for (let i = 1; i <= 100; i++) {
+    const key = process.env[`PRIVATE_KEY_${i}`];
+    if (key && key.trim().startsWith('0x')) {
+      keys.push(key.trim());
+    }
+  }
+  
+  console.log(chalk.gray(`\nDetected ${keys.length} private key(s) in .env`));
+  
   if (keys.length === 0) {
-    console.log(chalk.red('Tidak ada private key di .env'));
-    console.log(chalk.yellow('Tambahkan private key di PRIVATE_KEY (satu per baris)'));
+    console.log(chalk.red('\n❌ Tidak ada private key di .env'));
+    console.log(chalk.yellow('\nFormat yang benar:'));
+    console.log(chalk.gray('  PRIVATE_KEY_1=0xYourPrivateKey1'));
+    console.log(chalk.gray('  PRIVATE_KEY_2=0xYourPrivateKey2'));
+    console.log(chalk.gray('  PRIVATE_KEY_3=0xYourPrivateKey3'));
+    console.log(chalk.gray('  ... dst'));
     process.exit(1);
   }
 
