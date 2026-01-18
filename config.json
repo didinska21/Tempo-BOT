@@ -1,0 +1,27 @@
+{
+  "automation": {
+    "enabled": true,
+    "loopDelayHours": 12,
+    "tasks": {
+      "claimFaucet": {
+        "enabled": true
+      },
+      "sendTokens": {
+        "enabled": true,
+        "sendsPerWallet": 100,
+        "amountPerTx": "1"
+      },
+      "deployContracts": {
+        "enabled": true,
+        "deploysPerWallet": 10,
+        "type": "ERC20"
+      }
+    },
+    "delays": {
+      "betweenWallets": 3,
+      "betweenClaims": 15,
+      "betweenSends": 2,
+      "betweenDeploys": 5
+    }
+  }
+}
