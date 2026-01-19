@@ -1,22 +1,27 @@
 {
-  "name": "auto-tx-tempo",
-  "version": "1.0.0",
-  "description": "auto.tx by didinska - Send / Deploy / Faucet (RPC) CLI (ethers v6)",
+  "name": "tempo-bot-multiwallet",
+  "version": "2.0.0",
   "type": "module",
-  "main": "main.js",
+  "description": "Multi-wallet automation for Tempo blockchain",
+  "main": "loop.js",
   "scripts": {
-    "start": "node main.js",
-    "deploy": "node deploy.js",
-    "send": "node send.js",
-    "faucet": "node faucet.js"
+    "start": "node loop.js",
+    "loop": "node loop.js",
+    "manual": "node main.js",
+    "compile": "./compile.sh",
+    "install-all": "./install.sh"
   },
-  "author": "didinska",
-  "license": "MIT",
   "dependencies": {
-    "dotenv": "^10.0.0",
-    "ethers": "^6.0.0",
-    "cli-progress": "^3.9.1",
-    "ora": "^6.1.2",
-    "chalk": "^5.3.0"
+    "@openzeppelin/contracts": "^5.0.0",
+    "chalk": "^5.3.0",
+    "cli-progress": "^3.12.0",
+    "dotenv": "^16.3.1",
+    "ethers": "^6.9.0",
+    "ora": "^7.0.1",
+    "readline": "^1.3.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
