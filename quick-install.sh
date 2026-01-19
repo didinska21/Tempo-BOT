@@ -24,8 +24,8 @@ fi
 
 # Compile contracts
 mkdir -p build
-solc --optimize --abi --bin --base-path . --include-path node_modules contracts/SimpleERC20.sol -o build/ 2>/dev/null
-solc --optimize --abi --bin --base-path . --include-path node_modules contracts/SimpleERC721.sol -o build/ 2>/dev/null
+solc --optimize --abi --bin --overwrite --base-path . --include-path node_modules contracts/SimpleERC20.sol -o build/ 2>/dev/null
+solc --optimize --abi --bin --overwrite --base-path . --include-path node_modules contracts/SimpleERC721.sol -o build/ 2>/dev/null
 
 cd build
 mv SimpleERC20.abi SimpleERC20.abi.json 2>/dev/null
