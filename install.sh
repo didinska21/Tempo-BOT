@@ -111,14 +111,14 @@ if [ ! -f "contracts/SimpleERC20.sol" ] || [ ! -f "contracts/SimpleERC721.sol" ]
 else
     # Compile ERC20
     echo "Compiling SimpleERC20.sol..."
-    solc --optimize --abi --bin \
+    solc --optimize --abi --bin --overwrite \
         --base-path . \
         --include-path node_modules \
         contracts/SimpleERC20.sol -o build/
     
     # Compile ERC721
     echo "Compiling SimpleERC721.sol..."
-    solc --optimize --abi --bin \
+    solc --optimize --abi --bin --overwrite \
         --base-path . \
         --include-path node_modules \
         contracts/SimpleERC721.sol -o build/
