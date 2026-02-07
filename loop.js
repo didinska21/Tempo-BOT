@@ -102,8 +102,23 @@ function parseTokens() {
 
 // ===== Load Build untuk Deploy =====
 function loadBuild(name) {
-  const abi = JSON.parse(fs.readFileSync(path.join(BUILD_DIR, `${name}.abi.json`), 'utf8'));
-  const bytecode = fs.readFileSync(path.join(BUILD_DIR, `${name}.bytecode.txt`), 'utf8');
+  const abiPath = path.join(BUILD_DIR, `${name}.abi.json`);
+  const bytecodePath = path.join(BUILD_DIR, `${name}.bytecode.txt`);
+  
+  // Check if build files exist
+  if (!fs.existsSync(abiPath) || !fs.existsSync(bytecodePath)) {
+    console.log(chalk.red(`\n❌ Build files not found for ${name}`));
+    console.log(chalk.yellow('\nPlease compile contracts first:'));
+    console.log(chalk.gray('  ./compile.sh'));
+    console.log(chalk.gray('  # or'));
+    console.log(chalk.gray('  npm run compile'));
+    console.log();
+    
+    throw new Error(`Build files not found. Please compile contracts first.`);
+  }
+  
+  const abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
+  const bytecode = fs.readFileSync(bytecodePath, 'utf8');
   return { abi, bytecode };
 }
 
