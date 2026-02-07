@@ -1,4 +1,4 @@
-# 🤖 Tempo-BOT Multi-Wallet Automation
+# 🤖 Tempo-BOT Multi-Wallet Automation v2.0
 
 Automated blockchain transaction system untuk Tempo Network dengan support multi-wallet dan auto-loop.
 
@@ -13,9 +13,13 @@ Automated blockchain transaction system untuk Tempo Network dengan support multi
 
 ## 📋 Features
 
-- ✅ **Multi-Wallet Support** - Kelola unlimited wallets sekaligus
+- ✅ **Multi-Wallet Support** - Kelola unlimited wallets sekaligus (PRIVATE_KEY_1, PRIVATE_KEY_2, dst)
+- ✅ **Standalone Mode** - Setiap module bisa dijalankan mandiri (send.js, deploy.js, faucet.js)
+- ✅ **Interactive Wallet Switcher** - Ganti wallet langsung dari menu
+- ✅ **Custom Loop Delay** - Tentukan sendiri delay loop (1-72 jam)
+- ✅ **Amount Confirmation** - Tampil konfirmasi jumlah sebelum send
 - ✅ **Round-Robin Execution** - Distribusi merata ke semua wallet
-- ✅ **Auto-Loop System** - Otomatis repeat setiap 12 jam (configurable)
+- ✅ **Auto-Loop System** - Otomatis repeat dengan delay custom
 - ✅ **Faucet Claims** - Auto claim token dari RPC Tempo
 - ✅ **Token Sending** - Batch kirim token dengan round-robin
 - ✅ **Contract Deployment** - Deploy ERC20/ERC721 secara otomatis
@@ -55,48 +59,133 @@ npm install
 
 ### 3. Setup Environment
 
-Edit file `.env`:
+Copy dan edit file `.env`:
 
 ```bash
+cp .env.example .env
 nano .env
 ```
 
-Tambahkan konfigurasi:
+Isi konfigurasi:
 
 ```env
+# RPC Configuration
 RPC_URL=https://rpc.testnet.tempo.xyz
 EXPLORER_BASE=https://explore.tempo.xyz
+
+# Token Addresses
 TOKENS=PathUSD:0x20c0000000000000000000000000000000000000,ThetaUSD:0x20c0000000000000000000000000000000000003,BetaUSD:0x20c0000000000000000000000000000000000002,AlphaUSD:0x20c0000000000000000000000000000000000001
-TOKEN_BYTECODE=
-NFT_BYTECODE=
+
 WAIT_CONFIRM=true
 INTERVAL_MS=1500
 
-# Private Keys (tambahkan wallet sebanyak yang diinginkan)
+# Private Keys - Multi-Wallet Support
 PRIVATE_KEY_1=0xYourPrivateKey1
 PRIVATE_KEY_2=0xYourPrivateKey2
 PRIVATE_KEY_3=0xYourPrivateKey3
-# ... dst sampai PRIVATE_KEY_100
+# ... tambahkan sampai 100 wallet
 ```
 
-### 4. Setup Configuration
+### 4. Setup Smart Contracts
 
-Edit `config.json` (opsional):
+Letakkan contract files di folder `contracts/`:
 
-```bash
-nano config.json
-```
+**contracts/SimpleERC20.sol** - ERC20 token contract  
+**contracts/SimpleERC721.sol** - ERC721 NFT contract
 
-### 5. Run Automation
+Contracts sudah disediakan di repository.
 
-**Auto-Loop Mode:**
+### 5. Run Bot
+
+**Option 1: Auto-Loop Mode** (Recommended)
 ```bash
 node loop.js
 ```
+Program akan bertanya delay loop yang diinginkan (1-72 jam).
 
-**Manual Mode:**
+**Option 2: Interactive Mode**
 ```bash
 node main.js
+```
+Menu interaktif dengan wallet switcher.
+
+**Option 3: Standalone Modules**
+```bash
+node send.js      # Hanya send tokens
+node deploy.js    # Hanya deploy contracts
+node faucet.js    # Hanya claim faucet
+```
+
+---
+
+## 🎮 Usage Examples
+
+### Auto-Loop Mode
+```bash
+$ node loop.js
+
+╔═══════════════════════════════════════════════╗
+║   TEMPO-BOT MULTI-WALLET AUTOMATION           ║
+╚═══════════════════════════════════════════════╝
+
+⚙️  Konfigurasi Loop Delay
+────────────────────────────────────────────────
+
+Berapa jam delay antar cycle loop? (1-72 jam): 6
+
+✓ Loop delay set: 6 jam
+  (Setiap cycle akan diulang setiap 6 jam)
+
+✓ Loaded 5 wallet(s)
+✓ Loaded 4 token(s): PathUSD, ThetaUSD, BetaUSD, AlphaUSD
+✓ Loop delay: 6 jam
+```
+
+### Interactive Mode
+```bash
+$ node main.js
+
+✓ Loaded 5 wallet(s)
+✓ Loaded 4 token(s)
+
+┌─────────────────────────────────────────────┐
+│ AUTO.TX by didinska                         │
+├─────────────────────────────────────────────┤
+│ Wallets  : 5 wallet(s) loaded               │
+│ Active   : #1 0x1234...5678                 │
+│ Explorer : https://explore.tempo.xyz        │
+├─────────────────────────────────────────────┤
+│ 1. PathUSD | 1000000                        │
+│ 2. ThetaUSD | 1000000                       │
+│ 3. BetaUSD | 1000000                        │
+│ 4. AlphaUSD | 1000000                       │
+└─────────────────────────────────────────────┘
+
+Pilih menu:
+ 1. Send Address (per token / send all)
+ 2. Deploy Kontrak (Token / NFT)
+ 3. Claim Faucet (RPC)
+ 4. ─────────────────────────────
+ 5. Switch Wallet (Current: #1)
+ 6. Exit
+```
+
+### Standalone Send
+```bash
+$ node send.js
+
+╔═══════════════════════════════════════╗
+║     SEND TOKEN - STANDALONE MODE     ║
+╚═══════════════════════════════════════╝
+
+✓ Loaded 5 wallet(s)
+✓ Loaded 4 token(s): PathUSD, ThetaUSD, BetaUSD, AlphaUSD
+
+═══ SELECT WALLET ═══
+Pilih wallet:
+ 1. #1 - 0x1234...5678
+ 2. #2 - 0x5678...9abc
+ ...
 ```
 
 ---
@@ -158,17 +247,11 @@ node main.js
 | `betweenSends` | Delay setelah send token | `2s` |
 | `betweenDeploys` | Delay setelah deploy contract | `5s` |
 
-#### Loop Settings
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `loopDelayHours` | Jam tunggu sebelum repeat cycle | `12` |
-
 ---
 
 ## 📊 Execution Flow
 
-### Contoh: 5 Wallets, 100 Send/Wallet, 10 Deploy/Wallet
+### Loop Mode Example: 5 Wallets, 100 Send/Wallet
 
 ```
 Cycle 1:
@@ -184,112 +267,17 @@ Cycle 1:
 ├─ 2. SEND TOKENS (Round-Robin)
 │  ├─ Round 1:  W1 → W2 → W3 → W4 → W5
 │  ├─ Round 2:  W1 → W2 → W3 → W4 → W5
-│  ├─ Round 3:  W1 → W2 → W3 → W4 → W5
 │  ├─ ...
 │  └─ Round 100: W1 → W2 → W3 → W4 → W5
-│     Total: 500 transactions (100 × 5 wallets)
+│     Total: 500 transactions
 │
 ├─ 3. DEPLOY CONTRACTS (Round-Robin)
 │  ├─ Round 1:  W1 → W2 → W3 → W4 → W5
-│  ├─ Round 2:  W1 → W2 → W3 → W4 → W5
 │  ├─ ...
 │  └─ Round 10: W1 → W2 → W3 → W4 → W5
-│     Total: 50 deployments (10 × 5 wallets)
+│     Total: 50 deployments
 │
-└─ Wait 12 hours → Repeat Cycle 2
-```
-
-### Token Distribution (Round-Robin)
-
-Setiap wallet akan send token secara bergiliran:
-- Round 1: Wallet 1 send PathUSD
-- Round 2: Wallet 1 send ThetaUSD
-- Round 3: Wallet 1 send BetaUSD
-- Round 4: Wallet 1 send AlphaUSD
-- Round 5: Wallet 1 send PathUSD (repeat)
-
----
-
-## 🎨 Output Example
-
-```
-════════════════════════════════════════════════════════════
-    AUTO.TX MULTI-WALLET AUTOMATION - Cycle #1
-════════════════════════════════════════════════════════════
-
-Detected 5 private key(s) in .env
-✓ Loaded 5 wallet(s)
-✓ Loaded 4 token(s): PathUSD, ThetaUSD, BetaUSD, AlphaUSD
-
-Started: 2026-01-18 22:00:00
-Wallets: 5
-RPC: https://rpc.testnet.tempo.xyz
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  CLAIM FAUCET - Sequential
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✓ Wallet 1 (0x1234...5678) - Claim Faucet berhasil
-  └─ Claimed for 0x1234567890...
-     ✓ 4 token(s) received
-     √ 1.000.000 PathUSD : https://explore.tempo.xyz/tx/0xabc...
-     √ 1.000.000 AlphaUSD : https://explore.tempo.xyz/tx/0xdef...
-     √ 1.000.000 BetaUSD : https://explore.tempo.xyz/tx/0xghi...
-     √ 1.000.000 ThetaUSD : https://explore.tempo.xyz/tx/0xjkl...
-
-⏳ Next wallet: 3s
-
-✓ Wallet 2 (0x5678...9abc) - Claim Faucet berhasil
-...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  SEND TOKEN - Round Robin
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📍 Round 1/100
-
-✓ Wallet 1 (0x1234...5678) - Send Token berhasil
-  └─ [2026-01-18T22:05:00.000Z] ➜ SENT 0x9876543210...abcdef
-     1 PathUSD → 0xabcdef1234...
-     TX: https://explore.tempo.xyz/tx/0x9876543210...
-
-⏳ Next wallet: 3s
-
-✓ Wallet 2 (0x5678...9abc) - Send Token berhasil
-  └─ [2026-01-18T22:05:05.000Z] ➜ SENT 0x1234567890...fedcba
-     1 ThetaUSD → 0x1234567890...
-     TX: https://explore.tempo.xyz/tx/0x1234567890...
-
-...
-
-✓ Round 1 selesai
-
-📍 Round 2/100
-...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  DEPLOY CONTRACT - Round Robin
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📍 Round 1/10
-
-✓ Wallet 1 (0x1234...5678) - Deploy Contract berhasil
-  └─ Deployed ERC20: TEMP0ABC123 (TMPAB12)
-     Address: 0xContractAddress123...
-     TX: https://explore.tempo.xyz/tx/0xDeployTx...
-
-...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  CYCLE COMPLETE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✓ Cycle #1 selesai
-Duration: 45 minutes
-Ended: 2026-01-18 22:45:00
-
-⏰ Waiting 12 hours before next cycle...
-
-⏳ Next cycle in: 11h 59m 50s
+└─ Wait 6 hours → Repeat Cycle 2
 ```
 
 ---
@@ -298,31 +286,31 @@ Ended: 2026-01-18 22:45:00
 
 ```
 Tempo-BOT/
-├── loop.js                     # Main automation script (auto-loop)
-├── main.js                     # Manual interactive mode
-├── send.js                     # Send token functions
-├── deploy.js                   # Deploy contract functions
-├── faucet.js                   # Faucet claim functions
+├── loop.js                     # Auto-loop automation (dengan custom delay)
+├── main.js                     # Interactive mode (multi-wallet switcher)
+├── send.js                     # Send token module (standalone)
+├── deploy.js                   # Deploy contract module (standalone)
+├── faucet.js                   # Faucet claim module (standalone)
+├── stats.js                    # Statistics module
 ├── config.json                 # Configuration file
 ├── .env                        # Environment variables
+├── .env.example                # Example environment file
 ├── package.json                # npm dependencies
 ├── install.sh                  # Full installation script
 ├── quick-install.sh            # Quick installation script
 ├── compile.sh                  # Contract compilation script
+├── compile_all.js              # Compile all contracts (Node.js)
 ├── README.md                   # This file
 │
 ├── contracts/                  # Solidity contracts
 │   ├── SimpleERC20.sol        # ERC20 token contract
 │   └── SimpleERC721.sol       # ERC721 NFT contract
 │
-├── build/                      # Compiled contracts
-│   ├── SimpleERC20.abi.json
-│   ├── SimpleERC20.bytecode.txt
-│   ├── SimpleERC721.abi.json
-│   └── SimpleERC721.bytecode.txt
-│
-├── data/                       # Data files (optional)
-└── scripts/                    # Additional scripts (optional)
+└── build/                      # Compiled contracts (auto-generated)
+    ├── SimpleERC20.abi.json
+    ├── SimpleERC20.bytecode.txt
+    ├── SimpleERC721.abi.json
+    └── SimpleERC721.bytecode.txt
 ```
 
 ---
@@ -332,18 +320,23 @@ Tempo-BOT/
 ### NPM Scripts
 
 ```bash
-# Run auto-loop automation
+# Auto-loop automation (dengan custom delay)
 npm start
 # atau
 npm run loop
 
-# Run manual interactive mode
+# Interactive mode (dengan wallet switcher)
 npm run manual
+
+# Standalone modules
+npm run send        # Send tokens only
+npm run deploy      # Deploy contracts only
+npm run faucet      # Claim faucet only
 
 # Compile smart contracts
 npm run compile
 
-# Install all dependencies
+# Full installation
 npm run install-all
 ```
 
@@ -353,9 +346,36 @@ npm run install-all
 # Auto-loop mode
 node loop.js
 
-# Manual mode
+# Interactive mode
 node main.js
+
+# Standalone modules
+node send.js
+node deploy.js
+node faucet.js
 ```
+
+---
+
+## 🆕 What's New in v2.0
+
+### ✨ Major Features
+
+1. **Standalone Mode** - Setiap module bisa dijalankan mandiri
+2. **Custom Loop Delay** - Tentukan sendiri delay loop (1-72 jam)
+3. **Interactive Wallet Switcher** - Ganti wallet langsung dari menu
+4. **Amount Confirmation** - Tampil konfirmasi sebelum send
+5. **Task Configuration Display** - Tampil config di header loop
+6. **Better Error Messages** - Error handling lebih informatif
+
+### 🔧 Improvements
+
+- ✅ Multi-wallet support di semua module
+- ✅ Better UI/UX dengan konfirmasi
+- ✅ Auto-create folders saat install
+- ✅ Create .env.example template
+- ✅ Improved install scripts
+- ✅ Better logging & progress display
 
 ---
 
@@ -369,7 +389,7 @@ Tambahkan sebanyak mungkin wallet di `.env`:
 PRIVATE_KEY_1=0x...
 PRIVATE_KEY_2=0x...
 PRIVATE_KEY_3=0x...
-# ... dst sampai 100
+# ... sampai PRIVATE_KEY_100
 ```
 
 ### Custom Token Configuration
@@ -398,18 +418,6 @@ Edit `config.json`:
         "enabled": false  // Disable deploy
       }
     }
-  }
-}
-```
-
-### Adjust Loop Timing
-
-Edit `config.json`:
-
-```json
-{
-  "automation": {
-    "loopDelayHours": 6  // Loop setiap 6 jam
   }
 }
 ```
@@ -543,6 +551,10 @@ Untuk pertanyaan atau bantuan, bisa buka **[Issues](https://github.com/didinska2
 - [x] Faucet claiming
 - [x] Token sending
 - [x] Contract deployment
+- [x] Standalone mode
+- [x] Custom loop delay
+- [x] Wallet switcher
+- [x] Amount confirmation
 - [ ] Web dashboard
 - [ ] Database logging
 - [ ] Telegram notifications
@@ -556,5 +568,7 @@ Untuk pertanyaan atau bantuan, bisa buka **[Issues](https://github.com/didinska2
 
 [![GitHub Stars](https://img.shields.io/github/stars/didinska21/Tempo-BOT?style=social)](https://github.com/didinska21/Tempo-BOT)
 [![GitHub Forks](https://img.shields.io/github/forks/didinska21/Tempo-BOT?style=social)](https://github.com/didinska21/Tempo-BOT/fork)
+
+**Version 2.0** - Updated with Standalone Mode & Multi-Wallet Enhancements
 
 </div>
