@@ -9,6 +9,34 @@ import { runSendMenu } from './send.js';
 import { runDeployMenu } from './deploy.js';
 import { runInteractive as runFaucet } from './faucet.js';
 
+// ===== Load Wallets dari .env =====
+function loadWallets(provider) {
+  const keys = [];
+  
+  // Load PRIVATE_KEY_1, PRIVATE_KEY_2, PRIVATE_KEY_3, dst
+  for (let i = 1; i <= 100; i++) {
+    const key = process.env[`PRIVATE_KEY_${i}`];
+    if (key && key.trim().startsWith('0x')) {
+      keys.push(key.trim());
+    }
+  }
+  
+  if (keys.length === 0) {
+    console.log(chalk.red('\n❌ Tidak ada private key di .env'));
+    console.log(chalk.yellow('\nFormat yang benar:'));
+    console.log(chalk.gray('  PRIVATE_KEY_1=0xYourPrivateKey1'));
+    console.log(chalk.gray('  PRIVATE_KEY_2=0xYourPrivateKey2'));
+    console.log(chalk.gray('  PRIVATE_KEY_3=0xYourPrivateKey3'));
+    console.log(chalk.gray('  ... dst'));
+    process.exit(1);
+  }
+
+  return keys.map((pk, i) => {
+    const wallet = new Wallet(pk, provider);
+    return { index: i + 1, wallet, pk, address: wallet.address };
+  });
+}
+
 // ===== readline helper =====
 function rlQuestion(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -74,11 +102,15 @@ function renderTop() {
 }
 
 // ===== render header =====
-async function renderMain({ provider, address, tokens }) {
+async function renderMain({ provider, wallets, currentWalletIndex, tokens }) {
   console.clear();
   renderTop();
 
-  console.log(line(chalk.yellow('Wallet   : ') + chalk.white(address)));
+  const currentWallet = wallets[currentWalletIndex];
+  const address = currentWallet.address;
+
+  console.log(line(chalk.yellow('Wallets  : ') + chalk.white(`${wallets.length} wallet(s) loaded`)));
+  console.log(line(chalk.yellow('Active   : ') + chalk.green(`#${currentWallet.index} `) + chalk.white(address)));
   if (process.env.EXPLORER_BASE) {
     console.log(line(chalk.yellow('Explorer : ') + chalk.white(process.env.EXPLORER_BASE)));
   }
@@ -109,42 +141,83 @@ async function renderMain({ provider, address, tokens }) {
 
 // ===== MAIN =====
 async function main() {
-  if (!process.env.RPC_URL || !process.env.PRIVATE_KEY) {
-    console.log(chalk.red('RPC_URL / PRIVATE_KEY missing in .env'));
+  if (!process.env.RPC_URL) {
+    console.log(chalk.red('RPC_URL missing in .env'));
     process.exit(1);
   }
 
   const provider = new JsonRpcProvider(process.env.RPC_URL);
-  const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
-  const address = await wallet.getAddress();
-
+  const wallets = loadWallets(provider);
   const tokens = parseTokensEnv();
 
-  while (true) {
-    await renderMain({ provider, address, tokens });
+  console.log(chalk.green(`\n✓ Loaded ${wallets.length} wallet(s)`));
+  console.log(chalk.green(`✓ Loaded ${tokens.length} token(s)`));
+  console.log(chalk.gray('Press Ctrl+C to exit\n'));
+  
+  await new Promise(r => setTimeout(r, 1500));
 
-    const choice = await askNumbered([
+  let currentWalletIndex = 0; // Index wallet yang sedang aktif
+
+  while (true) {
+    await renderMain({ provider, wallets, currentWalletIndex, tokens });
+
+    const currentWallet = wallets[currentWalletIndex];
+
+    const menuItems = [
       'Send Address (per token / send all)',
       'Deploy Kontrak (Token / NFT)',
       'Claim Faucet (RPC)',
+      '─────────────────────────────',
+      `Switch Wallet (Current: #${currentWallet.index})`,
       'Exit'
-    ]);
+    ];
 
-    if (choice === 3) {
+    const choice = await askNumbered(menuItems);
+
+    // Exit
+    if (choice === 5) {
       console.log(chalk.green('\nBye 👋\n'));
       process.exit(0);
     }
 
+    // Switch Wallet
+    if (choice === 4) {
+      console.log(chalk.cyan('\n═══ SELECT WALLET ═══'));
+      const walletMenu = wallets.map((w, i) => 
+        `#${w.index} - ${w.address.slice(0, 10)}...${w.address.slice(-8)}${i === currentWalletIndex ? chalk.green(' (active)') : ''}`
+      );
+      walletMenu.push('Back');
+      
+      const walletChoice = await askNumbered(walletMenu, 'Pilih wallet:');
+      
+      if (walletChoice < wallets.length) {
+        currentWalletIndex = walletChoice;
+        console.log(chalk.green(`\n✓ Switched to wallet #${wallets[currentWalletIndex].index}`));
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      continue;
+    }
+
+    // Send Token
     if (choice === 0) {
-      await runSendMenu({ provider, wallet, tokens });
+      await runSendMenu({ 
+        provider, 
+        wallet: currentWallet.wallet, 
+        tokens 
+      });
     }
 
+    // Deploy Contract
     if (choice === 1) {
-      await runDeployMenu({ provider, wallet });
+      await runDeployMenu({ 
+        provider, 
+        wallet: currentWallet.wallet 
+      });
     }
 
+    // Claim Faucet
     if (choice === 2) {
-      await runFaucet();
+      await runFaucet(currentWallet.wallet, provider);
     }
   }
 }
