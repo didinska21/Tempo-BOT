@@ -39,9 +39,11 @@ async function countdown(seconds, label) {
 }
 
 // ===== MAIN =====
-export async function runInteractive() {
-  const provider = new JsonRpcProvider(process.env.RPC_URL);
-  const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
+export async function runInteractive(walletParam = null, providerParam = null) {
+  // Jika dipanggil dari main.js dengan parameter, gunakan parameter tersebut
+  // Jika tidak, gunakan dari .env (backward compatibility)
+  const provider = providerParam || new JsonRpcProvider(process.env.RPC_URL);
+  const wallet = walletParam || new Wallet(process.env.PRIVATE_KEY, provider);
   const address = await wallet.getAddress();
 
   console.clear();
