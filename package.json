@@ -1,27 +1,44 @@
 {
-  "name": "tempo-bot-multiwallet",
+  "name": "tempo-bot",
   "version": "2.0.0",
+  "description": "Automated blockchain transaction system untuk Tempo Network dengan multi-wallet support",
   "type": "module",
-  "description": "Multi-wallet automation for Tempo blockchain",
-  "main": "loop.js",
+  "main": "main.js",
   "scripts": {
     "start": "node loop.js",
     "loop": "node loop.js",
     "manual": "node main.js",
+    "send": "node send.js",
+    "deploy": "node deploy.js",
+    "faucet": "node faucet.js",
     "compile": "./compile.sh",
-    "install-all": "./install.sh"
+    "install-all": "npm install && ./install.sh"
+  },
+  "keywords": [
+    "blockchain",
+    "ethereum",
+    "automation",
+    "tempo",
+    "multi-wallet",
+    "bot"
+  ],
+  "author": "didinska21",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/didinska21/Tempo-BOT.git"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
     "chalk": "^5.3.0",
+    "ora": "^8.1.1",
     "cli-progress": "^3.12.0",
-    "dotenv": "^16.3.1",
-    "ethers": "^6.9.0",
-    "ora": "^7.0.1",
-    "readline": "^1.3.0"
+    "@openzeppelin/contracts": "^5.1.0"
   },
   "devDependencies": {},
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
 }
