@@ -104,10 +104,22 @@ echo -e "${BLUE}[5/6]${NC} Compiling smart contracts..."
 # Create build directory
 mkdir -p build
 
+# Create contracts directory if not exists
+if [ ! -d "contracts" ]; then
+    echo -e "${YELLOW}⚠ contracts/ folder not found, creating...${NC}"
+    mkdir -p contracts
+fi
+
 # Check if contracts exist
 if [ ! -f "contracts/SimpleERC20.sol" ] || [ ! -f "contracts/SimpleERC721.sol" ]; then
     echo -e "${YELLOW}⚠ Contract files not found in contracts/ folder${NC}"
-    echo "Please make sure contracts/SimpleERC20.sol and contracts/SimpleERC721.sol exist"
+    echo "Please make sure to place:"
+    echo "  • contracts/SimpleERC20.sol"
+    echo "  • contracts/SimpleERC721.sol"
+    echo ""
+    echo "You can skip compilation for now and compile later with:"
+    echo "  ./compile.sh"
+    echo ""
 else
     # Compile ERC20
     echo "Compiling SimpleERC20.sol..."
@@ -193,14 +205,33 @@ fi
 # Check .env file
 if [ ! -f ".env" ]; then
     echo -e "${YELLOW}⚠ .env file not found${NC}"
-    echo "Please create .env file with your configuration"
+    echo "Creating example .env file..."
+    cat > .env.example << 'EOF'
+# RPC Configuration
+RPC_URL=https://rpc.testnet.tempo.xyz
+EXPLORER_BASE=https://explore.tempo.xyz
+
+# Token Addresses (format: Symbol:Address,Symbol:Address)
+TOKENS=PathUSD:0x20c0000000000000000000000000000000000000,ThetaUSD:0x20c0000000000000000000000000000000000003,BetaUSD:0x20c0000000000000000000000000000000000002,AlphaUSD:0x20c0000000000000000000000000000000000001
+
+# Wait for confirmation
+WAIT_CONFIRM=true
+
+# Interval between transactions (ms)
+INTERVAL_MS=1500
+
+# Private Keys - Multi-Wallet Support
+# Add as many wallets as you need (PRIVATE_KEY_1, PRIVATE_KEY_2, etc)
+PRIVATE_KEY_1=0xYourPrivateKeyHere1
+PRIVATE_KEY_2=0xYourPrivateKeyHere2
+PRIVATE_KEY_3=0xYourPrivateKeyHere3
+# ... add more as needed (up to 100)
+EOF
+    echo -e "${GREEN}✓ Created .env.example${NC}"
     echo ""
-    echo "Example:"
-    echo "RPC_URL=https://rpc.testnet.tempo.xyz"
-    echo "EXPLORER_BASE=https://explore.tempo.xyz"
-    echo "TOKENS=PathUSD:0x...,ThetaUSD:0x..."
-    echo "PRIVATE_KEY_1=0x..."
-    echo "PRIVATE_KEY_2=0x..."
+    echo "Please copy and edit it:"
+    echo "  cp .env.example .env"
+    echo "  nano .env"
 else
     echo -e "${GREEN}✓ .env file exists${NC}"
 fi
@@ -229,10 +260,21 @@ echo ""
 echo "  2. Edit config.json if needed:"
 echo "     nano config.json"
 echo ""
-echo "  3. Run automation:"
+echo "  3. Run automation (with custom loop delay):"
 echo "     node loop.js"
 echo ""
-echo "  4. Or run manual mode:"
+echo "  4. Or run interactive mode (multi-wallet support):"
 echo "     node main.js"
+echo ""
+echo "  5. Or run standalone modules:"
+echo "     node send.js      # Send tokens only"
+echo "     node deploy.js    # Deploy contracts only"
+echo "     node faucet.js    # Claim faucet only"
+echo ""
+echo "💡 Tips:"
+echo "  • All scripts now support multi-wallet (PRIVATE_KEY_1, PRIVATE_KEY_2, etc)"
+echo "  • loop.js will ask for custom delay hours (1-72 hours)"
+echo "  • main.js has wallet switcher in menu"
+echo "  • send.js shows amount confirmation before sending"
 echo ""
 echo "════════════════════════════════════════"
