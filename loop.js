@@ -3,6 +3,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import chalk from 'chalk';
 import ora from 'ora';
+import readline from 'readline';
 import { JsonRpcProvider, Wallet, Contract, parseUnits } from 'ethers';
 import { ContractFactory } from 'ethers';
 import path from 'path';
@@ -10,6 +11,43 @@ import path from 'path';
 const CONFIG_PATH = './config.json';
 const BUILD_DIR = './build';
 const sleep = ms => new Promise(r => setTimeout(r, ms * 1000));
+
+// ===== readline helper =====
+function rlQuestion(q) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(res => rl.question(q, a => {
+    rl.close();
+    res(a);
+  }));
+}
+
+// ===== Ask Loop Delay Hours =====
+async function askLoopDelayHours() {
+  console.log(chalk.cyan('\n╔═══════════════════════════════════════════════╗'));
+  console.log(chalk.cyan('║') + chalk.magenta.bold('   TEMPO-BOT MULTI-WALLET AUTOMATION         ') + chalk.cyan('║'));
+  console.log(chalk.cyan('╚═══════════════════════════════════════════════╝'));
+  console.log();
+  console.log(chalk.yellow('⚙️  Konfigurasi Loop Delay'));
+  console.log(chalk.gray('────────────────────────────────────────────────'));
+  console.log();
+  
+  while (true) {
+    const input = await rlQuestion(chalk.cyan('Berapa jam delay antar cycle loop? (1-72 jam): '));
+    const hours = Number(input.trim());
+    
+    if (!isNaN(hours) && hours >= 1 && hours <= 72) {
+      console.log();
+      console.log(chalk.green(`✓ Loop delay set: ${chalk.bold(hours)} jam`));
+      console.log(chalk.gray(`  (Setiap cycle akan diulang setiap ${hours} jam)`));
+      console.log();
+      await sleep(2);
+      return hours;
+    }
+    
+    console.log(chalk.red('❌ Masukkan angka antara 1-72 jam'));
+    console.log();
+  }
+}
 
 // ===== Load Config =====
 function loadConfig() {
@@ -294,6 +332,9 @@ async function executeSequential(wallets, taskName, taskFn, delayBetween) {
 
 // ===== Main Automation Loop =====
 async function runAutomation() {
+  // Ask loop delay hours di awal
+  const loopDelayHours = await askLoopDelayHours();
+  
   const config = loadConfig();
   const provider = new JsonRpcProvider(process.env.RPC_URL);
   const wallets = loadWallets(provider);
@@ -301,6 +342,7 @@ async function runAutomation() {
   
   console.log(chalk.green(`\n✓ Loaded ${wallets.length} wallet(s)`));
   console.log(chalk.green(`✓ Loaded ${tokens.length} token(s): ${tokens.map(t => t.symbol).join(', ')}`));
+  console.log(chalk.yellow(`✓ Loop delay: ${loopDelayHours} jam`));
   console.log(chalk.gray('Press Ctrl+C to stop automation\n'));
   await sleep(2);
   
@@ -313,6 +355,7 @@ async function runAutomation() {
     console.log(chalk.gray(`Started: ${startTime.toLocaleString()}`));
     console.log(chalk.gray(`Wallets: ${wallets.length}`));
     console.log(chalk.gray(`RPC: ${process.env.RPC_URL}`));
+    console.log(chalk.gray(`Loop Delay: ${loopDelayHours} jam`));
     console.log();
     
     // ===== 1. CLAIM FAUCET (Sequential) =====
@@ -370,10 +413,9 @@ async function runAutomation() {
     cycle++;
     
     // ===== Wait Before Next Cycle =====
-    const delayHours = config.automation.loopDelayHours;
-    const delaySeconds = delayHours * 3600;
+    const delaySeconds = loopDelayHours * 3600;
     
-    console.log(chalk.yellow(`⏰ Waiting ${delayHours} hours before next cycle...`));
+    console.log(chalk.yellow(`⏰ Waiting ${loopDelayHours} hours before next cycle...`));
     console.log();
     
     // Countdown dengan format jam:menit:detik
