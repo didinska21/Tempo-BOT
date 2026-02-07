@@ -209,12 +209,9 @@ async function sendTokenForWallet(wallet, tokens, config, round) {
     const short = tx.hash.slice(0, 10) + '...' + tx.hash.slice(-6);
     
     console.log(chalk.gray(`  └─ [${now}] ➜ SENT ${short}`));
-    console.log(
-      chalk.gray(`     ${amountHuman} ${token.symbol} → ${to.slice(0, 10)}...`)
-    );
-    console.log(
-      chalk.cyan(`     TX: ${process.env.EXPLORER_BASE}/tx/${tx.hash}`)
-    );
+    console.log(chalk.gray(`     Amount: ${chalk.white(amountHuman)} ${token.symbol}`));
+    console.log(chalk.gray(`     To: ${to.slice(0, 10)}...${to.slice(-8)}`));
+    console.log(chalk.cyan(`     TX: ${process.env.EXPLORER_BASE}/tx/${tx.hash}`));
     
     // Optional: wait confirmation jika WAIT_CONFIRM=true
     if (process.env.WAIT_CONFIRM === 'true') {
@@ -356,6 +353,34 @@ async function runAutomation() {
     console.log(chalk.gray(`Wallets: ${wallets.length}`));
     console.log(chalk.gray(`RPC: ${process.env.RPC_URL}`));
     console.log(chalk.gray(`Loop Delay: ${loopDelayHours} jam`));
+    
+    // Display configuration
+    console.log();
+    console.log(chalk.cyan('═══ TASK CONFIGURATION ═══'));
+    
+    if (config.automation.tasks.claimFaucet.enabled) {
+      console.log(chalk.green('✓ Claim Faucet: ENABLED'));
+    } else {
+      console.log(chalk.gray('✗ Claim Faucet: DISABLED'));
+    }
+    
+    if (config.automation.tasks.sendTokens.enabled) {
+      console.log(chalk.green('✓ Send Tokens: ENABLED'));
+      console.log(chalk.gray(`  └─ Sends per wallet: ${config.automation.tasks.sendTokens.sendsPerWallet}`));
+      console.log(chalk.gray(`  └─ Amount per TX: ${config.automation.tasks.sendTokens.amountPerTx} token`));
+      console.log(chalk.gray(`  └─ Total per wallet: ${config.automation.tasks.sendTokens.sendsPerWallet * Number(config.automation.tasks.sendTokens.amountPerTx)} token`));
+    } else {
+      console.log(chalk.gray('✗ Send Tokens: DISABLED'));
+    }
+    
+    if (config.automation.tasks.deployContracts.enabled) {
+      console.log(chalk.green('✓ Deploy Contracts: ENABLED'));
+      console.log(chalk.gray(`  └─ Deploys per wallet: ${config.automation.tasks.deployContracts.deploysPerWallet}`));
+      console.log(chalk.gray(`  └─ Contract type: ${config.automation.tasks.deployContracts.type}`));
+    } else {
+      console.log(chalk.gray('✗ Deploy Contracts: DISABLED'));
+    }
+    
     console.log();
     
     // ===== 1. CLAIM FAUCET (Sequential) =====
